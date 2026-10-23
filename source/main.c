@@ -23,7 +23,8 @@
 #include "ui_font_generated.h"
 
 #define MAX_GAMES 600
-#define PER_PAGE 4
+#define PER_PAGE 16
+#define COLUMNS 8
 #define GRID_COLS 4
 #define FONT_W 512
 #define FONT_H 256
@@ -53,8 +54,9 @@ static int count[2]={0,0}, tab=1, chosen[2]={0,0}, offset[2]={0,0};
 static int matching[2][MAX_GAMES],matches[2]={0,0};
 static char query[24]="";
 static int search_mode=0,keypos=0,exit_frames=0;
+static int focus_row=0; /* screen rows 0,1 for PS3 and 2,3 for PS2 */
 static const char keyboard[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-static int show_details=0, keep_running=1, loaded_tab=-1, loaded_offset=-1;
+static int show_details=0, keep_running=1;
 static int loaded_off[2]={-1,-1};
 static u32 *texture_mem=0;
 static u32 cover_offset[2*PER_PAGE];
@@ -133,14 +135,12 @@ static void text(float x,float y,const char *s,int size,u32 color,int maximum) {
     }
 }
 static void gradient(void) {
-    /* Flat black / red accent, intentionally never blue; unmistakable design. */
-    rect(0,0,848,512,RGBA(5,5,8,255));
-    rect(0,72,848,2,RGBA(54,17,23,255));
-    rect(0,472,848,2,RGBA(54,17,23,255));
-}
-static void frame(float x,float y,float w,float h,int active) {
-    rect(x,y,w,h,active?RGBA(245,28,54,255):RGBA(50,50,54,255));
-    rect(x+2,y+2,w-4,h-4,RGBA(16,16,20,255));
+    /* Dark cinema UI: subtle neutral gradient, never bright blue. */
+    int y;
+    for(y=0;y<512;y+=8) {
+        int v=9+(y<265?y/95:(512-y)/125);
+        rect(0,y,848,8,RGBA(v,v,v+2,255));
+    }
 }
 static int suffix(const char *s,const char *extension) {
     size_t n=strlen(s),e=strlen(extension);
@@ -242,6 +242,8 @@ static void update_filter(void) {
         chosen[p]=0;offset[p]=0;
     }
     loaded_off[0]=loaded_off[1]=-1;
+    focus_row=matches[1]?0:2;
+    tab=matches[1]?1:0;
 }
 static void refresh(void) {
     count[0]=count[1]=0;
@@ -252,51 +254,110 @@ static void refresh(void) {
     qsort(games[1],count[1],sizeof(Entry),cmp_games);
     update_filter();show_details=0;
 }
+/* No more synchronous decode of 32 full PNGs at startup. */
+static int stream_slot=0;
+static int stream_delay=0;
+static unsigned stream_bytes=0;
 static void unload_covers(void) {
     int i;
-    for(i=0;i<2*PER_PAGE;i++){
+    for(i=0;i<2*PER_PAGE;i++) {
         cover_offset[i]=0;
         memset(&cover_data[i],0,sizeof(pngData));
     }
 }
-static void covers_for_page(void) {
-    int p,i;
-    unsigned used=0;
-    u32 *write=texture_mem;
+static void begin_cover_stream(void) {
     unload_covers();
+    stream_slot=0;stream_delay=8;stream_bytes=0;
     loaded_off[0]=offset[0];loaded_off[1]=offset[1];
-    if(!texture_mem)return;
-    for(p=0;p<2;p++)for(i=0;i<PER_PAGE;i++){
-        int idx=offset[p]+i,slot=p*PER_PAGE+i;
-        unsigned n;
-        pngData tmp;
-        if(idx>=matches[p])break;
-        memset(&tmp,0,sizeof(tmp));
-        pngLoadFromFile(games[p][matching[p][idx]].cover,&tmp);
-        if(!tmp.bmp_out)continue;
-        n=(unsigned)(tmp.pitch*tmp.height);
-        if(n<16||n+15u>TEX_BUDGET-used||tmp.width>1024||tmp.height>1024){
-            free(tmp.bmp_out);continue;
-        }
-        RSX_MEMCPY(write,tmp.bmp_out,n);
-        n=(n+15u)&~15u;
-        free(tmp.bmp_out);
-        tmp.bmp_out=0;
-        cover_offset[slot]=tiny3d_TextureOffset(write);
-        cover_data[slot]=tmp;
-        write+=n/4;
-        used+=n;
+}
+static int valid_cover(const char *path) {
+    FILE *f=fopen(path,"rb");
+    unsigned char h[24];
+    long sz;
+    unsigned w,hgt;
+    if(!f)return 0;
+    fseek(f,0,SEEK_END);sz=ftell(f);rewind(f);
+    if(sz<24||sz>1024*1024){fclose(f);return 0;}
+    if(fread(h,1,sizeof(h),f)!=sizeof(h)){fclose(f);return 0;}
+    fclose(f);
+    if(memcmp(h,"\x89PNG\r\n\x1a\n",8))return 0;
+    w=((unsigned)h[16]<<24)|((unsigned)h[17]<<16)|((unsigned)h[18]<<8)|h[19];
+    hgt=((unsigned)h[20]<<24)|((unsigned)h[21]<<16)|((unsigned)h[22]<<8)|h[23];
+    return w>=8 && hgt>=8 && w<=1024 && hgt<=1024;
+}
+static void stream_one_cover(void) {
+    int slot,p,i,idx;
+    unsigned n;
+    pngData tmp;
+    u32 *write;
+    if(!texture_mem || stream_slot>=2*PER_PAGE)return;
+    if(stream_delay>0){stream_delay--;return;}
+    slot=stream_slot++;
+    p=slot/PER_PAGE;i=slot%PER_PAGE;idx=offset[p]+i;
+    if(idx>=matches[p])return;
+    if(stream_bytes>3u*1024u*1024u)return;
+    if(!valid_cover(games[p][matching[p][idx]].cover))return;
+    memset(&tmp,0,sizeof(tmp));
+    pngLoadFromFile(games[p][matching[p][idx]].cover,&tmp);
+    if(!tmp.bmp_out)return;
+    if(tmp.width>1024 || tmp.height>1024 || !tmp.pitch){
+        free(tmp.bmp_out);return;
     }
+    if(tmp.width>160 || tmp.height>160){
+        unsigned mx=tmp.width>tmp.height?tmp.width:tmp.height;
+        unsigned dw=tmp.width*160u/mx,dh=tmp.height*160u/mx;
+        unsigned dpitch,x,y;
+        unsigned char *small;
+        if(dw==0||dh==0){free(tmp.bmp_out);return;}
+        dpitch=(dw*4u+63u)&~63u;
+        small=(unsigned char *)calloc((size_t)dpitch*dh,1);
+        if(!small){free(tmp.bmp_out);return;}
+        for(y=0;y<dh;y++)for(x=0;x<dw;x++){
+            unsigned sx=x*tmp.width/dw,sy=y*tmp.height/dh;
+            memcpy(small+y*dpitch+x*4u,
+                (unsigned char *)tmp.bmp_out+sy*tmp.pitch+sx*4u,4);
+        }
+        free(tmp.bmp_out);
+        tmp.bmp_out=small;tmp.width=dw;tmp.height=dh;tmp.pitch=dpitch;
+    }
+    n=(unsigned)tmp.pitch*tmp.height;
+    if(n<16 || n>160u*256u*4u || stream_bytes+n+16>3u*1024u*1024u) {
+        free(tmp.bmp_out);return;
+    }
+    write=texture_mem+stream_bytes/4;
+    RSX_MEMCPY(write,tmp.bmp_out,n);
+    cover_offset[slot]=tiny3d_TextureOffset(write);
+    free(tmp.bmp_out);tmp.bmp_out=0;
+    cover_data[slot]=tmp;
+    stream_bytes+=(n+15u)&~15u;
 }
 static void move_selection(int p,int change) {
     int next;
-    if(!matches[p])return;
+    if(matches[p]<=0)return;
     next=chosen[p]+change;
     if(next<0)next=0;
     if(next>=matches[p])next=matches[p]-1;
     chosen[p]=next;
-    if(chosen[p]<offset[p])offset[p]=chosen[p];
-    if(chosen[p]>=offset[p]+PER_PAGE)offset[p]=chosen[p]-(PER_PAGE-1);
+    offset[p]=(next/PER_PAGE)*PER_PAGE;
+    focus_row=(p==1?0:2)+(next-offset[p])/COLUMNS;
+}
+static void navigate_vertical(int direction) {
+    int old_p=focus_row<2?1:0;
+    int column=(chosen[old_p]-offset[old_p])%COLUMNS;
+    int row=focus_row+direction;
+    while(row>=0 && row<4) {
+        int p=row<2?1:0;
+        int begin=offset[p]+(row%2)*COLUMNS;
+        if(begin<matches[p]) {
+            int target=begin+column;
+            if(target>=matches[p])target=matches[p]-1;
+            chosen[p]=target;
+            tab=p;
+            focus_row=row;
+            return;
+        }
+        row+=direction;
+    }
 }
 static void search_action(int pos) {
     size_t len=strlen(query);
@@ -338,48 +399,58 @@ static void image(float x,float y,float w,float h,int slot) {
 
 
 static void title_label(char *dest,size_t capacity,const char *src) {
-    size_t n=strlen(src);
-    if(n>18)snprintf(dest,capacity,"%.15s...",src);
-    else snprintf(dest,capacity,"%s",src);
+    size_t i=0;
+    /* The font is variable-width. Clip to the actual ~90px tile width,
+     * not a fixed number of characters that spills onto the next card. */
+    if(!capacity)return;
+    dest[0]=0;
+    while(src[i] && i+1<capacity) {
+        dest[i]=src[i];
+        dest[i+1]=0;
+        if(line_width(dest,12.f,(int)i+1)>85.f)break;
+        i++;
+    }
+    if(src[i]) {
+        while(i>0 && line_width(dest,12.f,(int)i)>62.f)dest[--i]=0;
+        if(i+4<capacity)strcat(dest,"...");
+    }
 }
-static void draw_shelf(int p,int y) {
+static void draw_shelf_row(int p,int row,int y) {
     int i;
-    char stats[100],label[32];
-    float base=(float)y;
-    u32 title_col=(p==tab)?C_TEXT:C_MUTED;
-    if(p==tab) rect(24,base+4,5,20,C_ACCENT);
-    text(39,base,p==1?"PLAYSTATION 3":"PLAYSTATION 2",5,title_col,22);
-    snprintf(stats,sizeof(stats),"%d GAMES",matches[p]);
-    text(686,base+3,stats,4,C_MUTED,18);
-    for(i=0;i<PER_PAGE;i++){
-        int shown=offset[p]+i,slot=p*PER_PAGE+i;
-        float x=31+i*198.f,cover_y=base+28;
-        int active=p==tab && shown==chosen[p];
-        if(shown>=matches[p])break;
-        if(active){
-            rect(x-3,cover_y-3,183,147,C_ACCENT);
-            rect(x,cover_y,177,141,RGBA(38,38,42,255));
-        }else{
-            rect(x,cover_y,177,141,RGBA(34,34,38,255));
+    const int row_index=p==1?row:2+row;
+    for(i=0;i<COLUMNS;i++) {
+        int at=offset[p]+row*COLUMNS+i;
+        int slot=p*PER_PAGE+row*COLUMNS+i;
+        float x=30.f+i*101.f;
+        float top=(float)y;
+        int active=(focus_row==row_index && chosen[p]==at);
+        char label[32];
+        if(at>=matches[p])break;
+        /* No artificial panels around unselected images, like Netflix. */
+        if(active) {
+            rect(x-3,top-3,96,79,RGBA(253,254,255,255));
+            rect(x-1,top-1,92,75,C_ACCENT);
         }
-        rect(x+3,cover_y+3,171,135,RGBA(15,15,18,255));
-        if(cover_offset[slot])image(x+4,cover_y+3,169,133,slot);
-        else{
-            rect(x+50,cover_y+17,77,100,RGBA(43,43,49,255));
-            rect(x+50,cover_y+17,4,100,C_ACCENT);
-            text(x+64,cover_y+53,p==1?"PS3":"PS2",6,C_TEXT,3);
+        rect(x,top,90,72,RGBA(22,23,28,255));
+        if(cover_offset[slot])image(x+1,top+1,88,70,slot);
+        else {
+            rect(x+18,top+4,52,64,RGBA(37,39,46,255));
+            rect(x+18,top+4,3,64,C_ACCENT);
+            text(x+26,top+26,p==1?"PS3":"PS2",5,C_TEXT,3);
         }
-        title_label(label,sizeof(label),games[p][matching[p][shown]].title);
-        text(x+3,cover_y+148,label,4,active?C_TEXT:C_MUTED,19);
+        title_label(label,sizeof(label),games[p][matching[p][at]].title);
+        text(x,top+76,label,3,active?C_TEXT:C_MUTED,16);
     }
-    if(matches[p]==0){
-        rect(31,base+30,785,132,RGBA(27,28,35,255));
-        text(52,base+70,query[0]?"NO MATCHING GAMES":"NO GAMES FOUND",6,C_MUTED,29);
-    }
-    if(matches[p]>PER_PAGE){
-        snprintf(stats,sizeof(stats),"%d / %d",chosen[p]+1,matches[p]);
-        text(720,base+172,stats,3,C_MUTED,15);
-    }
+}
+static void draw_platform(int p,int header) {
+    char counter[40];
+    if(tab==p)rect(24,header+1,3,15,C_ACCENT);
+    text(35,header,p==1?"PLAYSTATION 3":"PLAYSTATION 2",5,C_TEXT,20);
+    snprintf(counter,sizeof(counter),"%d TITLES",matches[p]);
+    text(735,header+3,counter,3,C_MUTED,12);
+    draw_shelf_row(p,0,header+25);
+    draw_shelf_row(p,1,header+116);
+    if(matches[p]==0)text(35,header+64,"NO GAMES FOUND",5,C_MUTED,26);
 }
 static void draw_search(void) {
     int i;
@@ -418,29 +489,32 @@ static void draw_message(void) {
     text(130,292,exit_frames?"IF GAME DOES NOT START, SELECT MOUNTED ICON IN XMB":"PRESS O TO CLOSE",4,C_MUTED,70);
 }
 static void render(void) {
-    char status[110];
-    /* tiny3d_Clear consumes AARRGGBB, unlike tiny3d_VertexColor (RRGGBBAA). */
-    tiny3d_Clear(0xFF040406u,TINY3D_CLEAR_ALL);
+    char selection[72],meta[55];
+    const Entry *active=NULL;
+    tiny3d_Clear(0xFF09090Cu,TINY3D_CLEAR_ALL);
     tiny3d_AlphaTest(1,0x10,TINY3D_ALPHA_FUNC_GEQUAL);
     tiny3d_BlendFunc(1,TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
         TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ZERO,
         TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
     tiny3d_Project2D();
     gradient();
-    rect(0,0,848,70,RGBA(8,9,13,255));
-    rect(0,0,6,70,C_ACCENT);
-    text(31,13,"STATION NOVA",9,C_TEXT,18);
-    text(335,27,"THE GAME COLLECTION",4,C_MUTED,23);
-    if(query[0])snprintf(status,sizeof(status),"SEARCH: %.21s",query);
-    else snprintf(status,sizeof(status),"%d TITLES  /  SELECT TO SEARCH",count[0]+count[1]);
-    text(618,27,"V0.5 - DIRECT TEST",3,RGBA(254,105,115,255),25);
-    draw_shelf(1,72);
-    rect(31,268,785,1,RGBA(65,35,39,255));
-    draw_shelf(0,273);
-    rect(0,474,848,38,RGBA(8,9,13,255));
-    rect(0,474,848,1,C_EDGE);
-    text(24,484,"X DIRECT PLAY   /   SQUARE SEARCH   /   TRIANGLE RESCAN",3,C_TEXT,73);
-    text(683,484,"O EXIT",3,C_MUTED,12);
+    rect(0,0,848,49,RGBA(7,7,11,255));
+    rect(23,13,4,23,C_ACCENT);
+    text(37,10,"STATION",9,C_TEXT,11);
+    text(258,20,"NOVA",5,C_ACCENT,5);
+    if(matches[tab] && chosen[tab]<matches[tab])
+        active=&games[tab][matching[tab][chosen[tab]]];
+    if(active)snprintf(selection,sizeof(selection),"%.38s",active->title);
+    else snprintf(selection,sizeof(selection),"YOUR GAME LIBRARY");
+    text(341,16,selection,4,C_TEXT,39);
+    snprintf(meta,sizeof(meta),"%d TITLES",count[0]+count[1]);
+    text(753,18,meta,3,C_MUTED,16);
+    draw_platform(1,53);
+    rect(25,279,799,1,RGBA(42,42,48,255));
+    draw_platform(0,282);
+    rect(0,497,848,15,RGBA(9,9,13,255));
+    text(25,498,"X PLAY       SQUARE SEARCH       UP DOWN ROW       TRIANGLE RESCAN",2,C_MUTED,91);
+    text(766,498,"O EXIT",2,C_MUTED,10);
     if(search_mode)draw_search();
     if(show_details)draw_message();
     tiny3d_Flip();
@@ -513,9 +587,59 @@ static int has_boot_file(const char *path) {
     fclose(f);
     return 1;
 }
+/* Recognise the standard Classics placeholder and alternative installed
+ * launchers by their readable PARAM.SFO descriptions.  Never modify these. */
+static int sfo_contains(const char *path,const char *needle) {
+    unsigned char bytes[8192];
+    size_t n,i,j,k=strlen(needle);
+    FILE *f=fopen(path,"rb");
+    if(!f)return 0;
+    n=fread(bytes,1,sizeof(bytes),f);
+    fclose(f);
+    if(n<k)return 0;
+    for(i=0;i+k<=n;i++) {
+        for(j=0;j<k;j++)
+            if(toupper(bytes[i+j])!=toupper((unsigned char)needle[j]))break;
+        if(j==k)return 1;
+    }
+    return 0;
+}
+static int find_ps2_launcher(char *target,size_t cap) {
+    int fd;
+    u64 read=0;
+    sysFSDirent d;
+    const char *standard="/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN";
+    if(has_boot_file(standard)) {
+        snprintf(target,cap,"%s",standard);
+        return 1;
+    }
+    if(sysLv2FsOpenDir("/dev_hdd0/game",&fd)!=0)return 0;
+    for(;;) {
+        char boot[560],sfo[560];
+        memset(&d,0,sizeof(d));
+        read=sizeof(d);
+        if(sysLv2FsReadDir(fd,&d,&read)!=0||read==0)break;
+        if(d.d_name[0]=='.')continue;
+        snprintf(boot,sizeof(boot),"/dev_hdd0/game/%s/USRDIR/EBOOT.BIN",d.d_name);
+        if(!has_boot_file(boot))continue;
+        snprintf(sfo,sizeof(sfo),"/dev_hdd0/game/%s/PARAM.SFO",d.d_name);
+        if(sfo_contains(sfo,"PS2 Classics") ||
+           sfo_contains(sfo,"PS2 Launcher") ||
+           sfo_contains(sfo,"PS2 Placeholder") ||
+           sfo_contains(sfo,"PS2 ISO Launcher")) {
+           snprintf(target,cap,"%s",boot);
+           sysLv2FsCloseDir(fd);
+           return 1;
+        }
+    }
+    sysLv2FsCloseDir(fd);
+    return 0;
+}
 static void launch_selected(void) {
     char encoded[1500],command[1600],error_text[120];
     const char *target;
+    char ps2_launcher[560]={0};
+    int ps2_launcher_found=0;
     Entry *game;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
@@ -523,10 +647,7 @@ static void launch_selected(void) {
         snprintf(message,sizeof(message),"INVALID GAME PATH");
         show_error=show_details=1;return;
     }
-    if(tab==0 && !folder_exists("/dev_hdd0/game/PS2U10000")) {
-        snprintf(message,sizeof(message),"PS2 CLASSICS LAUNCHER IS MISSING");
-        show_error=show_details=1;return;
-    }
+    if(tab==0) ps2_launcher_found=find_ps2_launcher(ps2_launcher,sizeof(ps2_launcher));
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
     snprintf(message,sizeof(message),"MOUNTING GAME WITH WEBMAN...");
     show_details=1;show_error=0;render();
@@ -534,8 +655,13 @@ static void launch_selected(void) {
         snprintf(message,sizeof(message),"WEBMAN MOUNT FAILED - ENABLE HEN");
         show_error=show_details=1;return;
     }
-    target=tab==1?"/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN":
-                   "/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN";
+    if(tab==0 && !ps2_launcher_found) {
+        snprintf(message,sizeof(message),
+            "PS2 MOUNTED - OPEN YOUR CLASSICS LAUNCHER FROM XMB");
+        show_details=1;show_error=0;
+        return;
+    }
+    target=tab==1?"/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN":ps2_launcher;
     /* Let the virtual disc filesystem settle after the mount command. */
     usleep(850000);
     if(!has_boot_file(target)) {
@@ -636,16 +762,17 @@ int main(void) {
             if(pressed&PAD_CIRCLE) {show_details=show_error=0;}
         }else{
             if(pressed&PAD_CIRCLE)keep_running=0;
-            if(pressed&PAD_UP)tab=1;
-            if(pressed&PAD_DOWN)tab=0;
+            if(pressed&PAD_UP)navigate_vertical(-1);
+            if(pressed&PAD_DOWN)navigate_vertical(1);
             if(pressed&PAD_LEFT)move_selection(tab,-1);
             if(pressed&PAD_RIGHT)move_selection(tab,1);
             if(pressed&PAD_SQUARE || pressed&PAD_SELECT){search_mode=1;keypos=0;}
             if(pressed&PAD_TRIANGLE)refresh();
             if(pressed&PAD_CROSS)launch_selected();
         }
-        if(loaded_off[0]!=offset[0] || loaded_off[1]!=offset[1])covers_for_page();
+        if(loaded_off[0]!=offset[0] || loaded_off[1]!=offset[1])begin_cover_stream();
         render();
+        if(!show_details && !search_mode)stream_one_cover();
         usleep(16000);
     }
     sysUtilUnregisterCallback(SYSUTIL_EVENT_SLOT0);
