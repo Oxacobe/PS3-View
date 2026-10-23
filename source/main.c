@@ -246,54 +246,73 @@ static void image(float x,float y,float w,float h,int slot) {
     tiny3d_VertexPos(x,y+h,65534.f);tiny3d_VertexTexture(0.f,.99f);
     tiny3d_End();
 }
+
 static void render(void) {
     int i;
-    char stats[64];
-    tiny3d_Clear(C_BG,TINY3D_CLEAR_ALL);
-    tiny3d_AlphaTest(1,0x10,TINY3D_ALPHA_FUNC_GEQUAL);
-    tiny3d_BlendFunc(1,TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
-        TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ZERO,
-        TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
-    tiny3d_Project2D();
-    rect(0,0,848,512,C_BG);
-    rect(0,0,848,4,C_BLUE);
-    text(45,22,"STATION",8,C_TEXT,10);
-    text(47,70,"YOUR PLAYSTATION LIBRARY",3,C_MUTED,28);
-    rect(42,103,140,38,tab==0?C_BLUE:C_CARD);
-    rect(191,103,140,38,tab==1?C_BLUE:C_CARD);
-    text(88,112,"PS2",5,C_TEXT,3);
-    text(236,112,"PS3",5,C_TEXT,3);
-    snprintf(stats,sizeof(stats),"%d GAMES  |  PAGE %d",count[tab],offset[tab]/PER_PAGE+1);
-    text(574,115,stats,3,C_MUTED,30);
+    char stats[90];
+    const int ix=chosen[tab];
+    gradient();
+    rect(0,0,848,79,RGBA(10,17,29,255));
+    rect(29,20,5,39,C_BLUE);
+    text(45,16,"STATION",10,C_TEXT,14);
+    text(47,51,"YOUR GAMES. YOUR CONSOLE.",3,C_MUTED,26);
+    rect(647,27,160,26,RGBA(27,45,70,255));
+    text(662,32,"BETA 0.2  /  PS3",3,RGBA(123,184,255,255),22);
+
+    /* Navigation rail */
+    text(28,102,"LIBRARY",4,C_MUTED,12);
+    rect(19,143,154,60,tab==0?RGBA(36,93,157,255):C_CARD);
+    rect(19,211,154,60,tab==1?RGBA(36,93,157,255):C_CARD);
+    rect(21,145,3,56,tab==0?RGBA(81,177,255,255):C_EDGE);
+    rect(21,213,3,56,tab==1?RGBA(81,177,255,255):C_EDGE);
+    text(38,151,"PS2",7,C_TEXT,4);
+    text(38,179,"CLASSICS",3,C_MUTED,10);
+    text(38,219,"PS3",7,C_TEXT,4);
+    text(38,247,"GAMES",3,C_MUTED,10);
+    rect(175,90,1,352,C_EDGE);
+    text(27,355,"POWERED BY",3,C_MUTED,16);
+    text(27,372,"WEBMAN MOD",4,RGBA(125,191,255,255),16);
+    text(27,409,"L1 / R1",3,C_MUTED,14);
+    text(27,425,"SWITCH SYSTEM",3,C_MUTED,18);
+
+    /* Collection header */
+    text(198,89,tab==0?"PLAYSTATION 2":"PLAYSTATION 3",6,C_TEXT,20);
+    snprintf(stats,sizeof(stats),"%d GAMES   /   PAGE %d OF %d",
+             count[tab],offset[tab]/PER_PAGE+1,(count[tab]+PER_PAGE-1)/PER_PAGE>0?(count[tab]+PER_PAGE-1)/PER_PAGE:1);
+    text(199,121,stats,3,C_MUTED,52);
     for(i=0;i<PER_PAGE;i++) {
-        int idx=offset[tab]+i;
-        int column=i%5,row=i/5;
-        float x=46+(column*157),y=156+(row*155);
-        unsigned selected=idx==chosen[tab];
+        const int idx=offset[tab]+i;
+        int col=i%GRID_COLS,row=i/GRID_COLS;
+        float x=196+col*158.f,y=150+row*155.f;
+        int selected=idx==chosen[tab];
         if(idx>=count[tab])break;
-        rect(x-3,y-3,143,147,selected?RGBA(65,148,237,255):C_EDGE);
-        rect(x,y,137,141,C_CARD);
-        rect(x+16,y+6,105,103,selected?RGBA(34,75,121,255):RGBA(30,46,73,255));
-        if(cover_offset[i]) image(x+16,y+6,105,103,i);
+        if(selected) rect(x-3,y-3,151,150,RGBA(39,120,221,255));
+        frame(x,y,145,144,selected);
+        rect(x+10,y+9,125,106,RGBA(11,21,35,255));
+        if(cover_offset[i])image(x+10,y+9,125,106,i);
         else {
-            text(x+47,y+42,tab==0?"PS2":"PS3",5,C_MUTED,3);
-            text(x+34,y+70,"NO COVER",2,C_MUTED,8);
+            text(x+46,y+38,tab==0?"PS2":"PS3",6,RGBA(88,133,184,255),4);
+            text(x+38,y+71,"NO ART",3,C_MUTED,12);
         }
-        text(x+10,y+118,games[tab][idx].title,2,C_TEXT,15);
+        text(x+10,y+122,games[tab][idx].title,3,C_TEXT,18);
     }
-    if(!count[tab]) {
-        rect(43,184,756,170,C_CARD);
-        text(93,232,"NO GAMES FOUND ON THIS DRIVE",5,C_TEXT,32);
-        text(120,286,"TRIANGLE TO RESCAN",3,C_MUTED,25);
+    if(count[tab]==0) {
+        rect(205,176,593,184,C_CARD);
+        text(242,218,"NO GAMES FOUND",8,C_TEXT,30);
+        text(244,277,"PRESS TRIANGLE TO SCAN AGAIN",4,C_MUTED,35);
     }
+    /* Context overlay: never obscure selection before confirmation */
     if(show_details && count[tab]) {
-        rect(38,366,772,99,RGBA(24,49,83,255));
-        text(56,379,"LAUNCH DISABLED IN SAFE TEST BUILD",3,C_TEXT,39);
-        text(56,402,games[tab][chosen[tab]].title,3,C_TEXT,48);
-        text(56,429,games[tab][chosen[tab]].path,2,C_MUTED,83);
+        rect(193,335,635,125,RGBA(16,38,66,255));
+        rect(193,335,635,3,C_BLUE);
+        text(208,349,show_error?"LAUNCH ERROR":"SELECTED GAME",4,show_error?RGBA(255,139,139,255):C_MUTED,26);
+        text(208,372,show_error?message:games[tab][ix].title,5,C_TEXT,46);
+        text(208,413,show_error?"O TO CLOSE   /   CHECK WEBMAN":"X TO PLAY   /   O TO CLOSE",3,C_MUTED,50);
     }
-    rect(0,475,848,37,RGBA(13,24,42,255));
-    text(26,486,"L1 R1  SYSTEM   D PAD  BROWSE   X  INFO   O  EXIT   TRIANGLE  RESCAN",2,C_MUTED,105);
+    rect(0,474,848,38,RGBA(8,16,29,255));
+    rect(0,473,848,1,C_EDGE);
+    text(25,483,"X  PLAY   /   SQUARE  INFO   /   TRIANGLE  RESCAN",3,C_MUTED,63);
+    text(656,483,"O  EXIT  /  L1 R1",3,C_MUTED,26);
     tiny3d_Flip();
 }
 static void callback(u64 status,u64 param,void *userdata) {
@@ -308,6 +327,7 @@ int main(void) {
     sysModuleLoad(SYSMODULE_PNGDEC);
     tiny3d_Init(1024*1024);
     texture_mem=tiny3d_AllocTexture(TEX_BUDGET);
+    font_setup();
     ioPadInit(7);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0,callback,NULL);
     refresh();
@@ -327,8 +347,8 @@ int main(void) {
         if(pressed & PAD_TRIANGLE) refresh();
         if(pressed & PAD_LEFT && chosen[tab]>0) {chosen[tab]--;show_details=0;}
         if(pressed & PAD_RIGHT && chosen[tab]<count[tab]-1) {chosen[tab]++;show_details=0;}
-        if(pressed & PAD_UP && chosen[tab]>=5) {chosen[tab]-=5;show_details=0;}
-        if(pressed & PAD_DOWN && chosen[tab]+5<count[tab]) {chosen[tab]+=5;show_details=0;}
+        if(pressed & PAD_UP && chosen[tab]>=GRID_COLS) {chosen[tab]-=GRID_COLS;show_details=0;}
+        if(pressed & PAD_DOWN && chosen[tab]+GRID_COLS<count[tab]) {chosen[tab]+=GRID_COLS;show_details=0;}
         if(pressed & PAD_CROSS && count[tab]) show_details=!show_details;
         offset[tab]=(chosen[tab]/PER_PAGE)*PER_PAGE;
         if(loaded_tab!=tab || loaded_offset!=offset[tab])covers_for_page();
