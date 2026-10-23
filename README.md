@@ -1,10 +1,10 @@
-# STATION NOVA 0.4 — PS3 + PS2 Classics library
+# STATION NOVA 0.5 — Experimental direct-launch test
 
 STATION is a native PlayStation 3 homebrew game-library interface that works alongside webMAN MOD, HEN and PS2 Classics Launcher.
 
 ## Release status
 
-STATION NOVA 0.4 is a new independent PS3 application, intentionally with title ID **STN000004**. Its build and runtime still require verification on a physical console. STATION 0.1 was tested on PS3 hardware and 0.2.1 started; 0.3 still appeared visually outdated and mounted but did not launch games. The NOVA interface and automatic handoff still require console verification. A successful cross-compile alone does not establish console functionality.
+STATION NOVA 0.5 is an update to the separate NOVA application, intentionally with title ID **STN000004**. Its build and runtime still require verification on a physical console. STATION 0.1 was tested on PS3 hardware and 0.2.1 started; 0.3 still appeared visually outdated and mounted but did not launch games. The NOVA's direct handoff still requires console verification. A successful cross-compile alone does not establish console functionality.
 
 ## What's new
 
@@ -31,9 +31,10 @@ On the search keyboard, navigate with D-pad and press X to enter characters or s
 
 ## Mounting and launching
 
-- **PS3 ISO and folder games**: Request `/mount_ps3/dev_hdd0/...` from webMAN on 127.0.0.1, then send `/play.ps3` to attempt auto-launch. If it returns to XMB, select the mounted disc icon.
-- **PS2 Classics `.BIN.ENC`**: Requires installed `PS2U10000` PS2 Classics Launcher. Mount through webMAN, send `/play.ps3?PS2U10000` to attempt launcher handoff. If it returns to XMB, select PS2 Classics Launcher.
-- webMAN documents these routes, but an HTTP success status is NOT proof of game startup. NOVA attempts both operations rather than mounting alone, with the XMB icon as the reliable manual fallback. This behaviour is still unverified on the console.
+- **PS3 ISO and folder games**: Request `/mount_ps3/dev_hdd0/...` from webMAN on 127.0.0.1, then use `sysProcessExitSpawn2` to attempt to execute `/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN` without another XMB click.
+- **PS2 Classics `.BIN.ENC`**: Requires installed `PS2U10000` PS2 Classics Launcher. Mount through webMAN, then attempt `sysProcessExitSpawn2` of `/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN`.
+- Direct launching is a **hardware experiment**, not yet known to work for commercial PS3 disc titles or the encrypted PS2 Classics launcher; launching disc/NPDRM games can require system context not provided by normal homebrew process replacement. If direct start returns to XMB without launching, select the already-mounted disc or PS2 Classics icon manually. **The compiler succeeding is not proof of working game launch.**
+- `sysProcessExitSpawn2` is a process-replacing syscall used in homebrew launchers including PS3LoadX. It is not an emulator, clone of PS2 Classics, nor a persistent plugin. It may end NOVA without starting a commercial game on some firmware versions.
 - STATION's library scanner does not copy, modify or delete games or saved data. webMAN may perform its normal mount operations when you press X.
 
 ## Scanned paths
