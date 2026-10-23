@@ -1,0 +1,47 @@
+name: Build STATION PS3
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "source/**"
+      - "Makefile"
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Native PS3 homebrew build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/02900/ps3-toolchain-tiny3d:latest
+    steps:
+      - name: Check out STATION
+        uses: actions/checkout@v4
+      - name: Check cross-compiler
+        shell: bash
+        run: |
+          echo "PS3DEV=${PS3DEV}"
+          echo "PSL1GHT=${PSL1GHT}"
+          command -v powerpc64-ps3-elf-gcc || command -v ppu-gcc
+          test -f "${PSL1GHT}/ppu_rules"
+      - name: Compile and build installable PKG
+        shell: bash
+        run: |
+          make pkg
+          ls -lh station*.pkg station*.self
+      - name: Archive build output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: station-ps3-build
+          if-no-files-found: warn
+          path: |
+            station.pkg
+            station.gnpdrm.pkg
+            station.self
+            EBOOT.BIN
