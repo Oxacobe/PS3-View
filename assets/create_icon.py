@@ -1,40 +1,70 @@
 #!/usr/bin/env python3
-"""Build a crisp, high-contrast 320x176 PS3 XMB icon for STATION NOVA.
-Uses the open-source DejaVu fonts installed only inside GitHub Actions.
+"""STATION NOVA: premium 320x176 XMB artwork.
+No binary font or artwork files are needed at build time. Generated with
+Pillow at 4x resolution and downsampled for excellent PS3 icon clarity.
 """
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-S=3
+import math
+
+S=4
 W,H=320,176
-im=Image.new("RGB",(W*S,H*S),(9,10,14))
-p=im.load()
-for y in range(H*S):
-    for x in range(W*S):
-        r=((x/(W*S))*.28+(y/(H*S))*.65)
-        p[x,y]=(int(9+9*r),int(10+11*r),int(14+14*r))
-glow=Image.new("RGBA",im.size,(0,0,0,0))
+w,h=W*S,H*S
+im=Image.new("RGB",(w,h))
+px=im.load()
+# Deep graphite gradient; just a hint of warm reflected light.
+for y in range(h):
+    for x in range(w):
+        fx,fy=x/w,y/h
+        radial=max(0.0,1.0-math.hypot(fx-.36,fy-.45)*1.7)
+        halo=max(0.0,1.0-math.hypot(fx-.95,fy+.05)*2.4)
+        noise=int(radial*11+halo*13)
+        px[x,y]=(int(8+noise+fy*4),int(10+noise*.57+fy*3),int(16+noise*.35+fy*3))
+im=im.convert("RGBA")
+glow=Image.new("RGBA",im.size)
 g=ImageDraw.Draw(glow)
-g.ellipse((160*S,-90*S,430*S,180*S),fill=(210,12,33,105))
-glow=glow.filter(ImageFilter.GaussianBlur(62*S))
-im=Image.alpha_composite(im.convert("RGBA"),glow)
+g.ellipse((0*S,0*S,180*S,188*S),fill=(235,45,12,140))
+glow=glow.filter(ImageFilter.GaussianBlur(31*S))
+im=Image.alpha_composite(im,glow)
+# Glowing rounded glass icon panel.
+panel=Image.new("RGBA",im.size)
+d=ImageDraw.Draw(panel)
+d.rounded_rectangle((19*S,17*S,159*S,159*S),radius=25*S,fill=(14,16,23,248),
+                    outline=(134,77,62,255),width=2*S)
+d.rounded_rectangle((23*S,20*S,155*S,154*S),radius=21*S,
+                    outline=(58,59,71,255),width=1*S)
+d.rounded_rectangle((32*S,27*S,142*S,30*S),radius=S,fill=(92,99,118,100))
+im=Image.alpha_composite(im,panel)
+# A custom folded N: draw neon bloom and then polished orange ribbons.
+shape=Image.new("RGBA",im.size)
+d=ImageDraw.Draw(shape)
+poly_left=[(44,119),(44,54),(63,44),(66,114)]
+poly_mid=[(61,48),(80,37),(138,110),(116,126)]
+poly_right=[(114,49),(136,42),(136,116),(117,127)]
+for coords in (poly_left,poly_mid,poly_right):
+    p=[(x*S,y*S) for x,y in coords]
+    d.polygon(p,fill=(255,64,16,255))
+bloom=shape.filter(ImageFilter.GaussianBlur(10*S))
+bloom.putalpha(bloom.getchannel("A").point(lambda v:int(v*.45)))
+im=Image.alpha_composite(im,bloom)
 d=ImageDraw.Draw(im)
-d.rectangle((13*S,16*S,85*S,159*S),fill=(226,15,43,255))
-d.rectangle((19*S,22*S,79*S,153*S),fill=(28,14,22,255))
+d.polygon([(x*S,y*S) for x,y in poly_left],fill=(241,54,14,255))
+d.polygon([(x*S,y*S) for x,y in poly_mid],fill=(255,136,29,255))
+d.polygon([(x*S,y*S) for x,y in poly_right],fill=(229,39,16,255))
+d.line([(61*S,48*S),(80*S,37*S),(138*S,110*S)],fill=(255,202,92,250),width=2*S)
+d.line([(43*S,118*S),(43*S,55*S)],fill=(255,125,62,220),width=2*S)
+# Modern typography, crisp and intentionally spacious.
 bold="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-regular="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-mark=ImageFont.truetype(bold,73*S)
-brand=ImageFont.truetype(bold,27*S)
-small=ImageFont.truetype(regular,11*S)
-d.text((18*S,39*S),"S",font=mark,fill=(255,255,255,255))
-d.rectangle((103*S,40*S,136*S,45*S),fill=(237,20,47,255))
-d.text((100*S,58*S),"STATION",font=brand,fill=(255,255,255,255),stroke_width=0)
-d.text((102*S,100*S),"NOVA",font=ImageFont.truetype(bold,19*S),fill=(252,44,67,255))
-d.line((103*S,128*S,295*S,128*S),fill=(79,81,93,255),width=1*S)
-d.rectangle((102*S,137*S,151*S,158*S),fill=(231,19,44,255))
-d.text((111*S,139*S),"PS3",font=small,fill=(255,255,255,255))
-d.rectangle((160*S,137*S,209*S,158*S),fill=(47,49,61,255))
-d.text((169*S,139*S),"PS2",font=small,fill=(255,255,255,255))
-im=im.convert("RGB").resize((W,H),Image.LANCZOS)
+reg="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+B=lambda n:ImageFont.truetype(bold,int(n*S))
+R=lambda n:ImageFont.truetype(reg,int(n*S))
+d.text((179*S,37*S),"NOVA",font=B(29),fill=(252,251,249,255),stroke_width=0)
+d.rounded_rectangle((181*S,80*S,275*S,83*S),radius=S,fill=(255,104,33,255))
+d.text((180*S,95*S),"THE GAME LIBRARY",font=R(10),fill=(205,205,210,255))
+d.text((180*S,117*S),"PS3    /    PS2",font=B(11),fill=(249,126,55,255))
+d.text((180*S,144*S),"STATION",font=R(8),fill=(120,123,136,255))
+d.line((20*S,169*S,300*S,169*S),fill=(62,41,40,255),width=S)
+im=im.convert("RGB").resize((W,H),Image.Resampling.LANCZOS)
 out=Path(__file__).with_name("ICON0.PNG")
-im.save(str(out),"PNG",optimize=True)
-print("STATION NOVA premium XMB artwork:",out,out.stat().st_size)
+im.save(out,"PNG",optimize=True)
+print("NOVA cinema XMB icon:",out,out.stat().st_size)
