@@ -30,15 +30,15 @@ jobs:
           echo "PSL1GHT=${PSL1GHT}"
           command -v powerpc64-ps3-elf-gcc || command -v ppu-gcc
           test -f "${PSL1GHT}/ppu_rules"
-      - name: Generate branded PS3 XMB icon
-        shell: bash
-        run: python3 assets/create_icon.py
       - name: Generate smooth scalable UI font
         shell: bash
         run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pil fonts-dejavu-core
           python3 assets/gen_font.py
+      - name: Generate premium XMB artwork
+        shell: bash
+        run: python3 assets/create_icon.py
       - name: Compile and build installable PKG
         shell: bash
         run: |
