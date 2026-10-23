@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 #include <net/socket.h>
 #include <net/net.h>
+#include <sys/process.h>
 #include "ui_font_generated.h"
 
 #define MAX_GAMES 600
@@ -432,13 +433,13 @@ static void render(void) {
     text(335,27,"THE GAME COLLECTION",4,C_MUTED,23);
     if(query[0])snprintf(status,sizeof(status),"SEARCH: %.21s",query);
     else snprintf(status,sizeof(status),"%d TITLES  /  SELECT TO SEARCH",count[0]+count[1]);
-    text(618,27,"V0.4.1 / GPU FIX",3,RGBA(254,105,115,255),25);
+    text(618,27,"V0.5 - DIRECT TEST",3,RGBA(254,105,115,255),25);
     draw_shelf(1,72);
     rect(31,268,785,1,RGBA(65,35,39,255));
     draw_shelf(0,273);
     rect(0,474,848,38,RGBA(8,9,13,255));
     rect(0,474,848,1,C_EDGE);
-    text(24,484,"X PLAY   /   SQUARE SEARCH   /   TRIANGLE RESCAN",3,C_TEXT,70);
+    text(24,484,"X DIRECT PLAY   /   SQUARE SEARCH   /   TRIANGLE RESCAN",3,C_TEXT,73);
     text(683,484,"O EXIT",3,C_MUTED,12);
     if(search_mode)draw_search();
     if(show_details)draw_message();
@@ -497,10 +498,26 @@ static int encode_game_path(const char *path,char *encoded,size_t capacity) {
     return 1;
 }
 
+/*
+ * Direct-launch experiment based on PSL1GHT's sysProcessExitSpawn2 API,
+ * as used by PS3LoadX. The PS3 can execute only one foreground game;
+ * a successful syscall replaces NOVA with the target process.
+ *
+ * Important: commercial PS3 disc titles may require special XMB launch
+ * context which direct EBOOT spawning might not reproduce. Failed calls
+ * return a code and leave NOVA running, with manual XMB fallback.
+ */
+static int has_boot_file(const char *path) {
+    FILE *f=fopen(path,"rb");
+    if(!f)return 0;
+    fclose(f);
+    return 1;
+}
 static void launch_selected(void) {
-    char encoded[1500],command[1600];
+    char encoded[1500],command[1600],error_text[120];
+    const char *target;
     Entry *game;
-    int play_sent=0;
+    int rc;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
     if(!encode_game_path(game->path,encoded,sizeof(encoded))) {
@@ -508,31 +525,36 @@ static void launch_selected(void) {
         show_error=show_details=1;return;
     }
     if(tab==0 && !folder_exists("/dev_hdd0/game/PS2U10000")) {
-        snprintf(message,sizeof(message),"PS2 CLASSICS LAUNCHER NOT FOUND");
+        snprintf(message,sizeof(message),"PS2 CLASSICS LAUNCHER IS MISSING");
         show_error=show_details=1;return;
     }
-    /* First mount while still in a game/homebrew context. webMAN's
-     * /mount_ps3 endpoint explicitly bypasses its in-game mount guard.
-     * Then ask the plugin to queue/execute launch on the XMB. If the
-     * PS3 VSH declines, the game remains mounted for manual launching. */
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
-    snprintf(message,sizeof(message),"MOUNTING SELECTED GAME...");
+    snprintf(message,sizeof(message),"MOUNTING GAME WITH WEBMAN...");
     show_details=1;show_error=0;render();
     if(!webman_http(command)) {
-        snprintf(message,sizeof(message),"MOUNT FAILED - CHECK HEN / WEBMAN");
+        snprintf(message,sizeof(message),"WEBMAN MOUNT FAILED - ENABLE HEN");
         show_error=show_details=1;return;
     }
-    usleep(280000);
-    /* A successful HTTP response means webMAN accepted the command,
-     * not that a PS3 game actually started: the real-console test is vital. */
-    play_sent=webman_http(tab==1?"/play.ps3":"/play.ps3?PS2U10000");
-    if(play_sent) {
-        snprintf(message,sizeof(message),"WEBMAN LAUNCH REQUEST SENT");
-    } else {
+    target=tab==1?"/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN":
+                   "/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN";
+    /* Let the virtual disc filesystem settle after the mount command. */
+    usleep(850000);
+    if(!has_boot_file(target)) {
         snprintf(message,sizeof(message),
-            tab==1?"MOUNTED - USE PS3 DISC ICON":"MOUNTED - USE PS2 CLASSICS ICON");
+                 tab==1?"MOUNTED; NO PS3 BOOT FILE - USE DISC ICON":
+                        "MOUNTED; PS2 LAUNCHER EBOOT NOT FOUND");
+        show_error=show_details=1;
+        return;
     }
-    show_error=0;show_details=1;exit_frames=42;
+    snprintf(message,sizeof(message),"STARTING GAME DIRECTLY...");
+    show_details=1;show_error=0;render();
+    /* This is a process-replacing handoff, not an in-app emulator. */
+    rc=sysProcessExitSpawn2(target,NULL,NULL,NULL,0,1001,
+                             SYS_PROCESS_SPAWN_STACK_SIZE_1M);
+    /* A success should not return. Log visible error on failure. */
+    snprintf(error_text,sizeof(error_text),"DIRECT LAUNCH FAILED: 0x%08X",(unsigned)rc);
+    snprintf(message,sizeof(message),"%s",error_text);
+    show_details=1;show_error=1;exit_frames=0;
 }
 static void online_lookup(void) {
     char path[640];
