@@ -137,21 +137,81 @@ static void text(float x,float y,const char *s,int size,u32 color,int maximum) {
         x+=h*station_font_width[glyph]/32.f;
     }
 }
-static void gradient(void) {
-    /* Minimalist OLED cinema, rendered in RGB quads, not a browser. */
-    int y;
-    for(y=0;y<512;y+=8) {
-        int v=8+y/175;
-        rect(0,y,848,8,RGBA(v,v+1,v+6,255));
+/* All visual effects are Tiny3D geometry: no browser, shaders, oversized
+ * textures or startup PNG decoding. Optimised for the PS3's 848x512 frame.
+ * Inspired by the user-approved NOVA reference: dark cinematic hero,
+ * orange-lit celestial horizon, slim sidebar, portrait-cover shelves. */
+static void nova_backdrop(void) {
+    int y,i;
+    for(y=0;y<512;y+=10) {
+        int v=5+(y*3)/512;
+        rect(0,y,848,10,RGBA(v+1,v+2,v+6,255));
     }
-    /* Restrained copper highlights, not bright 8-bit full-screen blue. */
-    for(y=0;y<75;y+=5) {
-        int fade=(75-y)/6;
-        rect(0,y,848,5,RGBA(13+fade,11+fade/3,17+fade/3,255));
+    /* Featured sci-fi sky: warm light on horizon, ink-dark starfield. */
+    for(y=0;y<107;y+=3) {
+        int w=y<70?y/12:6;
+        rect(176,y,672,3,RGBA(8+w*2,12+w,19+w,255));
     }
-    rect(0,0,848,2,RGBA(198,66,21,255));
-    rect(24,275,800,1,RGBA(48,44,49,255));
-    rect(24,493,800,1,RGBA(48,44,49,255));
+    for(i=0;i<54;i++){
+        unsigned hash=(unsigned)(i*2654435761u+0x45bf41u);
+        int xx=182+(int)(hash%651u);
+        int yy=4+(int)((hash>>12)%96u);
+        int glow=(hash>>26)&3;
+        rect((float)xx,(float)yy,glow==3?2:1,1,
+             glow==3?RGBA(255,186,115,255):RGBA(80+glow*30,95+glow*26,127+glow*21,255));
+    }
+    /* Celestial crescent clipped into hero right edge, no bitmap cost. */
+    for(i=0;i<86;i+=2){
+        float xx=(float)(721+i);
+        float dx=(xx-769.f)/78.f;
+        float inside=1.f-dx*dx;
+        if(inside>0.f) {
+            float h=79.f*sqrtf(inside);
+            int warm=(int)(44.f*(1.f-inside));
+            rect(xx,41.f-h,2.f,2.f*h,RGBA(45+warm,40+warm/3,44+warm/4,255));
+            rect(xx,41.f-h,2.f,2.0f,RGBA(232,104,44,255));
+        }
+    }
+    /* Land silhouettes and cinematic orange horizon. */
+    for(i=0;i<92;i++){
+        int xx=180+i*8;
+        int ridge=77+((i*13+i*i*7)%24);
+        if(i>53&&i<76)ridge-=((i-53)*(76-i))/18;
+        rect((float)xx,(float)ridge,9.f,(float)(107-ridge),
+             RGBA(7+(i%4),9+(i%3),15+(i%3),255));
+    }
+    for(i=0;i<14;i++)
+        rect(176,105+i/2,672,(float)(i%2?1:2),
+             RGBA(47+i*3,22+i/2,17+i/3,255));
+}
+static void nova_sidebar(void) {
+    int i;
+    rect(0,0,174,497,RGBA(7,8,13,255));
+    rect(172,0,2,497,RGBA(45,42,47,255));
+    /* Brand mark: angular orange N with a subtle double line. */
+    rect(22,21,7,40,RGBA(255,87,25,255));
+    for(i=0;i<29;i++) {
+        rect((float)(28+i),(float)(22+i),7,4,RGBA(255,120+i*3,31,255));
+    }
+    rect(60,21,7,40,RGBA(243,57,22,255));
+    text(75,23,"NOVA",7,C_TEXT,4);
+    text(77,55,"CINEMA LIBRARY",2,C_MUTED,18);
+    rect(14,94,147,1,RGBA(48,43,45,255));
+    /* The highlighted sections correspond to genuinely usable controls. */
+    rect(0,115,4,37,C_ACCENT);
+    rect(8,115,155,37,RGBA(37,24,23,255));
+    text(24,125,"[+]  ALL GAMES",3,C_ACCENT,20);
+    rect(15,167,140,1,RGBA(30,31,39,255));
+    text(24,184,"L1  PLAYSTATION 3",3,
+         tab==1?C_TEXT:C_MUTED,23);
+    text(24,221,"R1  PS2 CLASSICS",3,
+         tab==0?C_TEXT:C_MUTED,21);
+    rect(15,266,140,1,RGBA(30,31,39,255));
+    text(24,282,"[ ]  SEARCH",3,C_MUTED,19);
+    text(24,320,"[+]  REFRESH",3,C_MUTED,19);
+    rect(15,411,140,1,RGBA(42,35,40,255));
+    text(24,431,"WEBMAN + HEN",3,C_MUTED,20);
+    text(24,458,"PRESS X TO PLAY",3,C_ACCENT,23);
 }
 static int suffix(const char *s,const char *extension) {
     size_t n=strlen(s),e=strlen(extension);
@@ -414,63 +474,61 @@ static void image(float x,float y,float w,float h,int slot) {
 
 static void title_label(char *dest,size_t capacity,const char *src) {
     size_t i=0;
-    /* The font is variable-width. Clip to the actual ~90px tile width,
-     * not a fixed number of characters that spills onto the next card. */
     if(!capacity)return;
     dest[0]=0;
-    while(src[i] && i+1<capacity) {
+    while(src[i] && i+1<capacity){
         dest[i]=src[i];
         dest[i+1]=0;
-        if(line_width(dest,12.f,(int)i+1)>85.f)break;
+        if(line_width(dest,8.f,(int)i+1)>67.f)break;
         i++;
     }
     if(src[i]) {
-        while(i>0 && line_width(dest,12.f,(int)i)>62.f)dest[--i]=0;
+        while(i>0 && line_width(dest,8.f,(int)i)>52.f)dest[--i]=0;
         if(i+4<capacity)strcat(dest,"...");
     }
 }
 static void draw_shelf_row(int p,int row,int y) {
     int i;
-    const int row_index=p==1?row:2+row;
-    for(i=0;i<COLUMNS;i++) {
+    const int active_row=(p==1?0:2)+row;
+    for(i=0;i<COLUMNS;i++){
         int at=offset[p]+row*COLUMNS+i;
         int slot=p*PER_PAGE+row*COLUMNS+i;
-        float x=30.f+i*101.f;
-        float top=(float)y;
-        int active=(focus_row==row_index && chosen[p]==at);
-        char label[32];
+        float x=185.f+i*82.f,top=(float)y;
+        int selected=focus_row==active_row && chosen[p]==at;
+        char label[42];
         if(at>=matches[p])break;
-        /* Compact, glossy floating covers with subtle edge and real
-         * 3-layer amber focus indicator. No expensive new textures. */
-        if(active) {
-            rect(x-4,top-4,98,80,RGBA(74,35,25,255));
-            rect(x-3,top-3,96,78,RGBA(255,157,68,255));
-            rect(x-1,top-1,92,74,RGBA(30,23,23,255));
+        /* Multi-layer illuminated focus + subtle drop shadow. */
+        if(selected){
+            rect(x-5,top-5,80,87,RGBA(83,41,26,255));
+            rect(x-4,top-4,78,85,RGBA(252,95,30,255));
+            rect(x-2,top-2,74,81,RGBA(255,185,64,255));
         } else {
-            rect(x+2,top+3,90,73,RGBA(4,5,9,255));
+            rect(x+2,top+3,71,81,RGBA(3,3,6,255));
+            rect(x-1,top-1,72,79,RGBA(63,57,61,255));
         }
-        rect(x,top,90,72,RGBA(23,24,33,255));
-        if(cover_offset[slot])image(x+1,top+1,88,70,slot);
+        rect(x,top,70,77,RGBA(25,27,36,255));
+        if(cover_offset[slot]) image(x+1,top+1,68,75,slot);
         else {
-            rect(x+22,top+6,47,60,RGBA(37,39,50,255));
-            rect(x+22,top+6,3,60,p==1?RGBA(255,140,75,255):RGBA(103,124,183,255));
-            text(x+28,top+25,p==1?"PS3":"PS2",5,C_TEXT,3);
+            rect(x+11,top+5,48,67,RGBA(36,39,49,255));
+            rect(x+11,top+5,3,67,p==1?C_ACCENT:RGBA(95,143,185,255));
+            text(x+20,top+24,p==1?"PS3":"PS2",5,C_TEXT,3);
         }
+        /* Integrated title strip, as on the user-supplied reference. */
+        rect(x,top+64,70,13,RGBA(8,8,12,242));
         title_label(label,sizeof(label),games[p][matching[p][at]].title);
-        text(x,top+77,label,3,active?C_TEXT:C_MUTED,16);
-        if(active)rect(x,top+91,90,2,C_ACCENT);
+        text(x+3,top+65,label,2,selected?RGBA(255,211,165,255):C_TEXT,23);
     }
 }
-static void draw_platform(int p,int header) {
+static void draw_platform(int p,int header){
     char counter[40];
-    rect(24,header-2,799,2,RGBA(41,40,49,255));
-    rect(25,header+2,3,14,p==1?C_ACCENT:RGBA(116,138,190,255));
-    text(36,header,p==1?"PLAYSTATION 3":"PS2 CLASSICS",5,C_TEXT,20);
-    snprintf(counter,sizeof(counter),"%d GAMES",matches[p]);
-    text(744,header+3,counter,3,C_MUTED,13);
-    draw_shelf_row(p,0,header+25);
-    draw_shelf_row(p,1,header+116);
-    if(matches[p]==0)text(35,header+64,"NO GAMES IN THIS SHELF",4,C_MUTED,34);
+    rect(184,header+1,642,1,RGBA(55,53,59,255));
+    rect(186,header+2,3,12,p==1?C_ACCENT:RGBA(123,143,202,255));
+    text(197,header+1,p==1?"PLAYSTATION 3":"PS2 CLASSICS",4,C_TEXT,19);
+    snprintf(counter,sizeof(counter),"%d TITLES",matches[p]);
+    text(745,header+3,counter,2,C_MUTED,12);
+    draw_shelf_row(p,0,header+20);
+    draw_shelf_row(p,1,header+105);
+    if(matches[p]==0)text(195,header+51,"NO GAMES IN THIS LIBRARY",3,C_MUTED,40);
 }
 static void draw_search(void) {
     int i;
@@ -501,50 +559,50 @@ static void draw_search(void) {
     snprintf(hint,sizeof(hint),"%d PS3 / %d PS2 RESULTS",matches[1],matches[0]);
     text(95,448,hint,3,C_MUTED,34);
 }
-static void draw_message(void) {
-    rect(99,152,653,195,RGBA(2,3,6,255));
-    rect(104,156,644,187,RGBA(24,25,34,255));
-    rect(104,156,644,4,show_error?RGBA(236,82,58,255):C_ACCENT);
-    text(128,184,show_error?"WEBMAN CONNECTION ISSUE":"GAME MOUNTED",7,C_TEXT,35);
-    text(130,234,message,5,C_TEXT,75);
-    if(exit_frames)
-        text(130,296,"RETURNING TO XMB - LAUNCH FROM ITS GAME ICON",4,C_MUTED,76);
-    else
-        text(130,296,"CIRCLE TO RETURN TO YOUR LIBRARY",4,C_MUTED,73);
+static void draw_message(void){
+    rect(188,175,642,147,RGBA(5,6,10,255));
+    rect(194,179,630,139,RGBA(24,25,34,255));
+    rect(194,179,630,4,show_error?RGBA(222,71,51,255):C_ACCENT);
+    text(215,195,show_error?"COULD NOT COMPLETE":"LAUNCH HANDOFF",6,C_TEXT,33);
+    text(215,242,message,4,C_TEXT,85);
+    text(216,294,exit_frames?
+         "IF NEEDED, SELECT GAME ICON FROM XMB":
+         "CIRCLE TO RETURN TO LIBRARY",3,C_MUTED,80);
 }
 static void render(void) {
-    char selection[72],meta[55];
+    char selected_title[72],count_label[32];
     const Entry *active=NULL;
-    tiny3d_Clear(0xFF090B10u,TINY3D_CLEAR_ALL);
+    tiny3d_Clear(0xFF05070Bu,TINY3D_CLEAR_ALL);
     tiny3d_AlphaTest(1,0x10,TINY3D_ALPHA_FUNC_GEQUAL);
     tiny3d_BlendFunc(1,TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
         TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ZERO,
         TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
     tiny3d_Project2D();
-    gradient();
-    /* Simple, confident lock-up in a compact 512-line console scene. */
-    rect(0,3,848,47,RGBA(11,12,18,255));
-    rect(24,12,4,30,C_ACCENT);
-    text(37,12,"NOVA",8,C_TEXT,9);
-    text(156,24,"CINEMA",3,C_ACCENT,10);
+    nova_backdrop();
+    nova_sidebar();
     if(matches[tab] && chosen[tab]<matches[tab])
         active=&games[tab][matching[tab][chosen[tab]]];
-    if(active)snprintf(selection,sizeof(selection),"%.37s",active->title);
-    else snprintf(selection,sizeof(selection),"YOUR GAME LIBRARY");
-    text(260,18,selection,4,C_TEXT,38);
-    snprintf(meta,sizeof(meta),"%d GAMES",count[0]+count[1]);
-    rect(727,14,103,25,RGBA(37,35,38,255));
-    text(738,18,meta,3,C_TEXT,13);
-    if(safe_cover_mode)text(572,36,"ARTWORK SAFE",2,C_ACCENT,20);
-    draw_platform(1,54);
-    draw_platform(0,282);
-    /* Quiet bottom command bar, with realistic post-mount instruction. */
-    rect(0,495,848,17,RGBA(13,13,20,255));
-    text(26,497,"X MOUNT",3,C_ACCENT,10);
-    text(124,497,"SQUARE SEARCH",3,C_MUTED,20);
-    text(298,497,"D-PAD NAVIGATE",3,C_MUTED,22);
-    text(510,497,"TRIANGLE REFRESH",3,C_MUTED,23);
-    text(731,497,"O EXIT",3,C_MUTED,9);
+    if(active)snprintf(selected_title,sizeof(selected_title),"%.34s",active->title);
+    else snprintf(selected_title,sizeof(selected_title),"DISCOVER YOUR COLLECTION");
+    rect(190,12,4,48,C_ACCENT);
+    text(209,13,"NOW SELECTED",3,RGBA(239,126,75,255),16);
+    text(209,34,selected_title,6,C_TEXT,34);
+    text(210,68,tab==1?"PS3  /  WEBMAN":"PS2  /  CLASSICS",3,C_MUTED,24);
+    text(390,69,"X  READY TO LAUNCH",3,C_ACCENT,30);
+    snprintf(count_label,sizeof(count_label),"%d GAMES",count[0]+count[1]);
+    rect(749,9,84,20,RGBA(25,23,31,255));
+    text(758,11,count_label,2,C_TEXT,14);
+    if(safe_cover_mode)text(652,88,"ART SAFE MODE",2,C_ACCENT,18);
+    draw_platform(1,105);
+    draw_platform(0,302);
+    /* Compact console legend; intentionally not interactive decoration. */
+    rect(0,497,848,15,RGBA(8,10,16,255));
+    rect(174,497,674,1,RGBA(61,43,36,255));
+    text(185,498,"X  PLAY",2,RGBA(85,189,243,255),12);
+    text(282,498,"R2+X MOUNT ONLY",2,C_MUTED,23);
+    text(462,498,"SQUARE SEARCH",2,RGBA(223,104,192,255),18);
+    text(610,498,"TRIANGLE RESCAN",2,RGBA(75,206,151,255),20);
+    text(758,498,"O EXIT",2,C_MUTED,8);
     if(search_mode)draw_search();
     if(show_details)draw_message();
     tiny3d_Flip();
@@ -858,6 +916,8 @@ int main(void) {
             if(pressed&PAD_CIRCLE) {show_details=show_error=0;}
         }else{
             if(pressed&PAD_CIRCLE)keep_running=0;
+            if(pressed&PAD_L1 && matches[1]>0){tab=1;focus_row=(chosen[1]-offset[1])/COLUMNS;}
+            if(pressed&PAD_R1 && matches[0]>0){tab=0;focus_row=2+(chosen[0]-offset[0])/COLUMNS;}
             if(pressed&PAD_UP)navigate_vertical(-1);
             if(pressed&PAD_DOWN)navigate_vertical(1);
             if(pressed&PAD_LEFT)move_selection(tab,-1);
