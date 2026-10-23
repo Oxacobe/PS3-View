@@ -38,6 +38,7 @@
 #define PAD_CROSS   0x0040
 #define PAD_SQUARE  0x0080
 #define PAD_SELECT  0x0100
+#define PAD_L2      0x0001
 #define PAD_CIRCLE  0x0020
 #define PAD_TRIANGLE 0x0010
 #define PAD_R1      0x0008
@@ -255,6 +256,7 @@ static void refresh(void) {
     update_filter();show_details=0;
 }
 /* No more synchronous decode of 32 full PNGs at startup. */
+static int safe_cover_mode=0;
 static int stream_slot=0;
 static int stream_delay=0;
 static unsigned stream_bytes=0;
@@ -292,7 +294,9 @@ static void stream_one_cover(void) {
     u32 *write;
     if(!texture_mem || stream_slot>=2*PER_PAGE)return;
     if(stream_delay>0){stream_delay--;return;}
-    slot=stream_slot++;
+    /* Load visible PS3 shelf first, then the PS2 shelf. */
+    slot=(stream_slot<PER_PAGE)?PER_PAGE+stream_slot:stream_slot-PER_PAGE;
+    stream_slot++;
     p=slot/PER_PAGE;i=slot%PER_PAGE;idx=offset[p]+i;
     if(idx>=matches[p])return;
     if(stream_bytes>3u*1024u*1024u)return;
@@ -509,11 +513,12 @@ static void render(void) {
     text(341,16,selection,4,C_TEXT,39);
     snprintf(meta,sizeof(meta),"%d TITLES",count[0]+count[1]);
     text(753,18,meta,3,C_MUTED,16);
+    if(safe_cover_mode)text(566,34,"ART SAFE MODE",3,C_ACCENT,22);
     draw_platform(1,53);
     rect(25,279,799,1,RGBA(42,42,48,255));
     draw_platform(0,282);
     rect(0,497,848,15,RGBA(9,9,13,255));
-    text(25,498,"X PLAY       SQUARE SEARCH       UP DOWN ROW       TRIANGLE RESCAN",2,C_MUTED,91);
+    text(25,498,"X PLAY  SQUARE SEARCH  D-PAD ROWS  TRIANGLE RESCAN  HOLD L2 = SAFE MODE",2,C_MUTED,110);
     text(766,498,"O EXIT",2,C_MUTED,10);
     if(search_mode)draw_search();
     if(show_details)draw_message();
@@ -753,6 +758,9 @@ int main(void) {
         }
         pressed=buttons & ~previous;
         previous=buttons;
+        /* Emergency safe mode: hold L2 when opening the application to
+         * avoid all artwork decodes if a particular cover is malformed. */
+        if(buttons & PAD_L2)safe_cover_mode=1;
         if(exit_frames>0){
             --exit_frames;
             if(exit_frames==0)keep_running=0;
@@ -772,7 +780,7 @@ int main(void) {
         }
         if(loaded_off[0]!=offset[0] || loaded_off[1]!=offset[1])begin_cover_stream();
         render();
-        if(!show_details && !search_mode)stream_one_cover();
+        if(!safe_cover_mode && !show_details && !search_mode)stream_one_cover();
         usleep(16000);
     }
     sysUtilUnregisterCallback(SYSUTIL_EVENT_SLOT0);
