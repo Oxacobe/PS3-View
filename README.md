@@ -1,6 +1,6 @@
-# STATION NOVA 1.7 — webMAN-native launch from XMB
+# STATION NOVA 1.8 — PS3 one-press CONFIRMED, PS2 target fixed
 
-**Separate installer, STN000017.** Installs alongside earlier versions; overwrites nothing.
+**Separate installer, STN000018.** Installs alongside earlier versions; overwrites nothing.
 
 ## Why 1.2–1.5 mounted but never launched (from webMAN-MOD source)
 
@@ -10,24 +10,18 @@
 4. `include/mount/mount.h` (1.4's `/play.ps3/<path>`): waits only 15 s for the game to close, then quits if the XMB's explore_plugin hasn't loaded yet.
 5. 1.5's `wm_request` file is only polled by the **Full** edition with the PhotoGUI/"Poll wm_request" option on, and still carried the bare `/play.ps3`.
 
-## What the 1.6 console test proved
+## Console results (user-confirmed)
 
-- PS2: the chain pressed X on the NOVA icon (NOVA re-opened). So the chained request survives NOVA's exit and webMAN does press X. `seg=<title id>` was simply not an XMB segment.
-- PS3: the disc icon was focused but the press did not start it.
+- **1.6 PS3: the game started from a single X press.** First one-press PS3 launch since 0.5. That flow (in-game `/mount_ps3`, then a chained `/play.ps3?col=game&seg=seg_device` run by webMAN after NOVA exits) is kept unchanged in 1.8.
+- 1.6 PS2: the chain pressed X on the NOVA icon (NOVA re-opened), proving the chain survives exit and X is pressed; `seg=<title id>` was not a valid XMB segment, so focus never moved.
+- 1.7 replaced the working PS3 route with `/play.ps3<path>`; it was never console-tested and is superseded.
 
-## What 1.7 does on X
+## What 1.8 does on X
 
-- **PS3:** no in-game mount. After NOVA exits, webMAN runs its own documented `/play.ps3<path>` ("mount <path> and start game from disc icon", forced autoplay) from XMB context — the same route as clicking the game in webMAN's browser page.
-- **PS2:** the proven in-game `/mount_ps3` prepares the Classics placeholder; after NOVA exits, webMAN runs `/play.ps3?<Classics title ID>` (start an installed title) from XMB context.
+- **PS3:** identical to 1.6.
+- **PS2:** proven in-game `/mount_ps3` prepares the Classics placeholder; after NOVA exits, webMAN runs its documented `/play.ps3?<Classics title ID>` ("start installed title from app_home icon"), which focuses an explicit XMB segment before pressing X.
 
-Chain sent in both cases:
-
-```
-/wait.ps3?3 ; /wait.ps3?xmb ; /wait.ps3?6 ;
-/popup.ps3?NOVA 1.7 step 1: XMB ready ;
-<launch command> ;
-/popup.ps3?NOVA 1.7 step 2: launch command finished
-```
+Chain: `/wait.ps3?3 ; /wait.ps3?xmb ; /wait.ps3?5 ; /popup.ps3?NOVA 1.8 step 1: XMB ready ; <launch> ; /popup.ps3?NOVA 1.8 step 2: launch command finished`
 
 ## Reading the test
 
