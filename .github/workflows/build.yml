@@ -54,6 +54,7 @@ jobs:
           name: station-ps3-build
           if-no-files-found: error
           path: |
+            assets/ICON0.PNG
             *.pkg
             *.self
             EBOOT.BIN
