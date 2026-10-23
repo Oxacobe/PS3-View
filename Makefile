@@ -37,7 +37,7 @@ INCLUDES	:=	include
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS		:=	-ltiny3d -lrsx -lsimdmath -lgcm_sys -lio -lsysutil -lrt -llv2 -lsysmodule -lpngdec -lm
+LIBS		:=	-ltiny3d -lrsx -lsimdmath -lgcm_sys -lio -lsysutil -lrt -llv2 -lsysmodule -lpngdec -lnet -lm
 
 
 #---------------------------------------------------------------------------------
