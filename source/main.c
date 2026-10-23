@@ -413,7 +413,7 @@ static void draw_search(void) {
 static void draw_message(void) {
     rect(102,160,643,179,RGBA(8,9,15,255));
     rect(102,160,643,4,show_error?RGBA(248,170,59,255):C_ACCENT);
-    text(129,185,show_error?"CANNOT MOUNT GAME":"GAME READY",7,C_TEXT,26);
+    text(129,185,show_error?"LAUNCH NOT COMPLETED":"GAME READY",7,C_TEXT,26);
     text(130,233,message,5,C_TEXT,58);
     text(130,292,exit_frames?"IF GAME DOES NOT START, SELECT MOUNTED ICON IN XMB":"PRESS O TO CLOSE",4,C_MUTED,70);
 }
@@ -517,7 +517,6 @@ static void launch_selected(void) {
     char encoded[1500],command[1600],error_text[120];
     const char *target;
     Entry *game;
-    int rc;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
     if(!encode_game_path(game->path,encoded,sizeof(encoded))) {
@@ -549,10 +548,11 @@ static void launch_selected(void) {
     snprintf(message,sizeof(message),"STARTING GAME DIRECTLY...");
     show_details=1;show_error=0;render();
     /* This is a process-replacing handoff, not an in-app emulator. */
-    rc=sysProcessExitSpawn2(target,NULL,NULL,NULL,0,1001,
-                             SYS_PROCESS_SPAWN_STACK_SIZE_1M);
-    /* A success should not return. Log visible error on failure. */
-    snprintf(error_text,sizeof(error_text),"DIRECT LAUNCH FAILED: 0x%08X",(unsigned)rc);
+    sysProcessExitSpawn2(target,NULL,NULL,NULL,0,1001,
+                         SYS_PROCESS_SPAWN_STACK_SIZE_1M);
+    /* This SDK exposes a void return type. If control returns,
+     * the requested launch did not replace this process. */
+    snprintf(error_text,sizeof(error_text),"DIRECT START RETURNED; USE XMB ICON");
     snprintf(message,sizeof(message),"%s",error_text);
     show_details=1;show_error=1;exit_frames=0;
 }
