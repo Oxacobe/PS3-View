@@ -506,7 +506,7 @@ static void render(void) {
     rect(23,13,4,23,C_ACCENT);
     text(37,10,"STATION",9,C_TEXT,11);
     text(258,20,"NOVA",5,C_ACCENT,5);
-    text(298,21,"0.7",3,C_MUTED,6);
+    text(298,21,"0.8 PLAY",3,C_MUTED,11);
     if(matches[tab] && chosen[tab]<matches[tab])
         active=&games[tab][matching[tab][chosen[tab]]];
     if(active)snprintf(selection,sizeof(selection),"%.38s",active->title);
@@ -641,11 +641,32 @@ static int find_ps2_launcher(char *target,size_t cap) {
     sysLv2FsCloseDir(fd);
     return 0;
 }
+/* Small diagnostic file: overwritten on each launch, never game data. */
+static void log_launch_stage(const char *stage,const Entry *game,const char *target) {
+    FILE *f=fopen("/dev_hdd0/tmp/station_nova_launch.log","wb");
+    if(!f)return;
+    fprintf(f,"STATION NOVA PLAY 0.8\nplatform=%s\nstage=%s\n",
+            tab==1?"PS3":"PS2",stage);
+    fprintf(f,"game=%.119s\n",game?game->title:"<none>");
+    fprintf(f,"source=%.479s\n",game?game->path:"<none>");
+    fprintf(f,"target=%s\n",target?target:"<none>");
+    fclose(f);
+}
+static int wait_for_launch_target(const char *target,int tries) {
+    int i;
+    for(i=0;i<tries;i++) {
+        if(has_boot_file(target))return 1;
+        /* Sysutil callbacks remain serviced while disc remapping settles. */
+        sysUtilCheckCallback();
+        usleep(250000);
+    }
+    return has_boot_file(target);
+}
 static void launch_selected(void) {
-    char encoded[1500],command[1600],error_text[120];
-    const char *target;
-    char ps2_launcher[560]={0};
+    char encoded[1500],command[1600],ps2_launcher[560]={0};
+    const char *target=NULL;
     int ps2_launcher_found=0;
+    int webman_accepted=0;
     Entry *game;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
@@ -653,40 +674,74 @@ static void launch_selected(void) {
         snprintf(message,sizeof(message),"INVALID GAME PATH");
         show_error=show_details=1;return;
     }
-    if(tab==0) ps2_launcher_found=find_ps2_launcher(ps2_launcher,sizeof(ps2_launcher));
+    if(tab==0) {
+        ps2_launcher_found=find_ps2_launcher(ps2_launcher,sizeof(ps2_launcher));
+        /* Missing launcher is NOT grounds to refuse mounting on HEN. */
+        target=ps2_launcher_found?ps2_launcher:NULL;
+    } else {
+        /* Identical PS3 target as the user-confirmed direct-launch 0.5. */
+        target="/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN";
+    }
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
-    snprintf(message,sizeof(message),"MOUNTING GAME WITH WEBMAN...");
-    show_details=1;show_error=0;render();
-    if(!webman_http(command)) {
-        snprintf(message,sizeof(message),"WEBMAN MOUNT FAILED - ENABLE HEN");
-        show_error=show_details=1;return;
-    }
-    if(tab==0 && !ps2_launcher_found) {
-        snprintf(message,sizeof(message),
-            "PS2 MOUNTED - OPEN YOUR CLASSICS LAUNCHER FROM XMB");
-        show_details=1;show_error=0;
-        return;
-    }
-    target=tab==1?"/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN":ps2_launcher;
-    /* Let the virtual disc filesystem settle after the mount command. */
-    usleep(850000);
-    if(!has_boot_file(target)) {
-        snprintf(message,sizeof(message),
-                 tab==1?"MOUNTED; NO PS3 BOOT FILE - USE DISC ICON":
-                        "MOUNTED; PS2 LAUNCHER EBOOT NOT FOUND");
+    snprintf(message,sizeof(message),"WAITING FOR WEBMAN MOUNT...");
+    show_details=1;show_error=0;
+    log_launch_stage("mount_request",game,target);
+    render();
+    webman_accepted=webman_http(command);
+    if(!webman_accepted) {
+        snprintf(message,sizeof(message),"WEBMAN UNAVAILABLE - CHECK HEN / PLUGINS");
         show_error=show_details=1;
+        log_launch_stage("webman_http_failed",game,target);
         return;
     }
-    snprintf(message,sizeof(message),"STARTING GAME DIRECTLY...");
-    show_details=1;show_error=0;render();
-    /* This is a process-replacing handoff, not an in-app emulator. */
+    log_launch_stage("mount_http_accepted",game,target);
+
+    if(tab==0 && !ps2_launcher_found) {
+        snprintf(message,sizeof(message),"PS2 MOUNTED - USE CLASSICS ICON IN XMB");
+        show_details=1;show_error=0;
+        log_launch_stage("ps2_launcher_not_found",game,NULL);
+        return;
+    }
+    snprintf(message,sizeof(message),"WAITING FOR MOUNTED GAME...");
+    render();
+    /* Do not assume the disc is available in 850 ms; slow webMAN/ISO
+     * scans after enabling HEN can take longer. Limit to five seconds. */
+    if(!wait_for_launch_target(target,20)) {
+        snprintf(message,sizeof(message),
+            tab==1?"NO DISC BOOT FILE - USE WEBMAN TO LAUNCH":
+                   "PS2 PLACEHOLDER NOT READY - USE XMB ICON");
+        show_details=1;show_error=1;
+        log_launch_stage("boot_target_not_ready",game,target);
+        return;
+    }
+    if(tab==0) {
+        /* HEN PS2 requires the Classics placeholder. Confirm webMAN has
+         * prepared the conventional encrypted image before starting. */
+        const char *prepared="/dev_hdd0/game/PS2U10000/USRDIR/ISO.BIN.ENC";
+        int i=0;
+        while(!has_boot_file(prepared) && i++<12) {
+            sysUtilCheckCallback();
+            usleep(250000);
+        }
+        if(!has_boot_file(prepared)) {
+            snprintf(message,sizeof(message),
+                "PS2 IMAGE NOT PREPARED - USE WEBMAN CLASSICS");
+            show_details=1;show_error=1;
+            log_launch_stage("ps2_iso_not_prepared",game,target);
+            return;
+        }
+    }
+    snprintf(message,sizeof(message),"HANDING OFF TO GAME...");
+    show_details=1;show_error=0;
+    log_launch_stage(tab==1?"ps3_direct_spawn":"ps2_classics_spawn",game,target);
+    render();
+    /* Same PS3 process-replacement API and arguments used in v0.5. */
     sysProcessExitSpawn2(target,NULL,NULL,NULL,0,1001,
                          SYS_PROCESS_SPAWN_STACK_SIZE_1M);
-    /* This SDK exposes a void return type. If control returns,
-     * the requested launch did not replace this process. */
-    snprintf(error_text,sizeof(error_text),"DIRECT START RETURNED; USE XMB ICON");
-    snprintf(message,sizeof(message),"%s",error_text);
+    /* On PSL1GHT the function is void. If it returns, start failed. */
+    snprintf(message,sizeof(message),"DIRECT START RETURNED - USE WEBMAN");
     show_details=1;show_error=1;exit_frames=0;
+    log_launch_stage("spawn_returned",game,target);
 }
 static void online_lookup(void) {
     char path[640];
