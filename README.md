@@ -1,15 +1,15 @@
-# STATION 0.3 — PS3 + PS2 Classics library
+# STATION NOVA 0.4 — PS3 + PS2 Classics library
 
 STATION is a native PlayStation 3 homebrew game-library interface that works alongside webMAN MOD, HEN and PS2 Classics Launcher.
 
 ## Release status
 
-STATION 0.3 has **compiled and packaged successfully on GitHub Actions**. The original 0.1 was tested on PS3 hardware and 0.2.1 started, but the new 0.3 interface and game-mount handoff still require physical-console verification. A successful cross-compile alone does not establish console functionality.
+STATION NOVA 0.4 is a new independent PS3 application, intentionally with title ID **STN000004**. Its build and runtime still require verification on a physical console. STATION 0.1 was tested on PS3 hardware and 0.2.1 started; 0.3 still appeared visually outdated and mounted but did not launch games. The NOVA interface and automatic handoff still require console verification. A successful cross-compile alone does not establish console functionality.
 
 ## What's new
 
 - New high-contrast charcoal/black theme, white text, red focus accent.
-- Redesigned PS3 XMB application artwork.
+- New PS3 XMB identity, icon and display title STATION NOVA. Existing STATION stays installed.
 - Two visible cover rails: PlayStation 3 above PlayStation 2, five cards per rail.
 - Full-height artwork preserving original proportions, titles beneath covers, horizontal scrolling.
 - Search inside your collection with a controller-driven keyboard. SPACE, DELETE, DONE, CLEAR are built in.
@@ -31,9 +31,9 @@ On the search keyboard, navigate with D-pad and press X to enter characters or s
 
 ## Mounting and launching
 
-- **PS3 ISO and folder games**: Request `/mount_ps3/dev_hdd0/...` from webMAN on 127.0.0.1, return to XMB, then select the mounted disc icon.
-- **PS2 Classics `.BIN.ENC`**: Requires the installed `PS2U10000` PS2 Classics Launcher. Mount through webMAN, return to XMB and select the PS2 Classics Launcher.
-- We intentionally no longer promise seamless one-button automatic startup from inside running STATION: the earlier `/play.ps3` attempt dropped out to XMB without starting the selected game. The PS3/browser/plugin environment makes auto-start from running homebrew less reliable than mounting then launching from XMB.
+- **PS3 ISO and folder games**: Request `/mount_ps3/dev_hdd0/...` from webMAN on 127.0.0.1, then send `/play.ps3` to attempt auto-launch. If it returns to XMB, select the mounted disc icon.
+- **PS2 Classics `.BIN.ENC`**: Requires installed `PS2U10000` PS2 Classics Launcher. Mount through webMAN, send `/play.ps3?PS2U10000` to attempt launcher handoff. If it returns to XMB, select PS2 Classics Launcher.
+- webMAN documents these routes, but an HTTP success status is NOT proof of game startup. NOVA attempts both operations rather than mounting alone, with the XMB icon as the reliable manual fallback. This behaviour is still unverified on the console.
 - STATION's library scanner does not copy, modify or delete games or saved data. webMAN may perform its normal mount operations when you press X.
 
 ## Scanned paths
@@ -50,7 +50,7 @@ Cover lookup: filename.PNG, basename.PNG, lowercase variations, PS3_GAME/ICON0.P
 2. Select the most recent **green** run.
 3. Download the `station-ps3-build` artifact and extract `station.pkg`.
 4. Copy it to a FAT32 USB drive, enable HEN and install in **Package Manager > Install Package Files > Standard**.
-5. Open the refreshed STATION icon in the Game menu.
+5. Open the **new STATION NOVA icon** in the Game menu. It is a separate entry: do not open the previous STATION.
 6. First check the interface and both shelves. Then mount a known-good PS3 ISO and confirm its disc icon exists on XMB. Lastly test a known-good encrypted PS2 Classic.
 
 ## Recovery
