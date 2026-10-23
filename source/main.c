@@ -71,8 +71,8 @@ static const u32 C_TEXT=RGBA(246,247,250,255);
 static const u32 C_MUTED=RGBA(202,203,207,255);
 
 
-/* Smooth anti-aliased font baked in CI from Pillow's freely distributable
- * bundled default font, rendered as a single hardware texture atlas. */
+/* Font atlas: GPU TINY3D_TEX_FORMAT_A8R8G8B8 uses AARRGGBB texels;
+ * drawn quads use RRGGBBAA vertex colour. Do NOT swap these formats. */
 static void rect(float x,float y,float w,float h,u32 color) {
     tiny3d_SetPolygon(TINY3D_QUADS);
     tiny3d_VertexPos(x,y,65535.f);tiny3d_VertexColor(color);
@@ -92,7 +92,7 @@ static void font_setup(void) {
     for(i=0;i<96;i++)for(y=0;y<32;y++)for(x=0;x<24;x++) {
         unsigned char a=station_font_alpha[i*24*32+y*24+x];
         int tx=(i%16)*24+x,ty=(i/16)*32+y;
-        pixels[ty*FONT_W+tx]=RGBA(255,255,255,a);
+        pixels[ty*FONT_W+tx]=(((u32)a)<<24) | 0x00FFFFFFu;
     }
     RSX_MEMCPY(out,pixels,FONT_W*FONT_H*4);
     font_offset=tiny3d_TextureOffset(out);
@@ -418,7 +418,8 @@ static void draw_message(void) {
 }
 static void render(void) {
     char status[110];
-    tiny3d_Clear(C_BG,TINY3D_CLEAR_ALL);
+    /* tiny3d_Clear consumes AARRGGBB, unlike tiny3d_VertexColor (RRGGBBAA). */
+    tiny3d_Clear(0xFF040406u,TINY3D_CLEAR_ALL);
     tiny3d_AlphaTest(1,0x10,TINY3D_ALPHA_FUNC_GEQUAL);
     tiny3d_BlendFunc(1,TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
         TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ZERO,
