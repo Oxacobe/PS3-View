@@ -8,6 +8,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <math.h>
 #include <unistd.h>
 #include <sys/file.h>
 #include <sysmodule/sysmodule.h>
@@ -167,9 +168,15 @@ static void nova_backdrop(void) {
         float inside=1.f-dx*dx;
         if(inside>0.f) {
             float h=79.f*sqrtf(inside);
+            float top=41.f-h, bottom=41.f+h;
             int warm=(int)(44.f*(1.f-inside));
-            rect(xx,41.f-h,2.f,2.f*h,RGBA(45+warm,40+warm/3,44+warm/4,255));
-            rect(xx,41.f-h,2.f,2.0f,RGBA(232,104,44,255));
+            if(top<0.f)top=0.f;
+            if(bottom>104.f)bottom=104.f;
+            if(bottom>top) {
+                rect(xx,top,2.f,bottom-top,
+                     RGBA(45+warm,40+warm/3,44+warm/4,255));
+                rect(xx,top,2.f,2.f,RGBA(232,104,44,255));
+            }
         }
     }
     /* Land silhouettes and cinematic orange horizon. */
