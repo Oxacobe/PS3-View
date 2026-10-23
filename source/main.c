@@ -513,9 +513,59 @@ static int has_boot_file(const char *path) {
     fclose(f);
     return 1;
 }
+/* Recognise the standard Classics placeholder and alternative installed
+ * launchers by their readable PARAM.SFO descriptions.  Never modify these. */
+static int sfo_contains(const char *path,const char *needle) {
+    unsigned char bytes[8192];
+    size_t n,i,j,k=strlen(needle);
+    FILE *f=fopen(path,"rb");
+    if(!f)return 0;
+    n=fread(bytes,1,sizeof(bytes),f);
+    fclose(f);
+    if(n<k)return 0;
+    for(i=0;i+k<=n;i++) {
+        for(j=0;j<k;j++)
+            if(toupper(bytes[i+j])!=toupper((unsigned char)needle[j]))break;
+        if(j==k)return 1;
+    }
+    return 0;
+}
+static int find_ps2_launcher(char *target,size_t cap) {
+    int fd;
+    u64 read=0;
+    sysFSDirent d;
+    const char *standard="/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN";
+    if(has_boot_file(standard)) {
+        snprintf(target,cap,"%s",standard);
+        return 1;
+    }
+    if(sysLv2FsOpenDir("/dev_hdd0/game",&fd)!=0)return 0;
+    for(;;) {
+        char boot[560],sfo[560];
+        memset(&d,0,sizeof(d));
+        read=sizeof(d);
+        if(sysLv2FsReadDir(fd,&d,&read)!=0||read==0)break;
+        if(d.d_name[0]=='.')continue;
+        snprintf(boot,sizeof(boot),"/dev_hdd0/game/%s/USRDIR/EBOOT.BIN",d.d_name);
+        if(!has_boot_file(boot))continue;
+        snprintf(sfo,sizeof(sfo),"/dev_hdd0/game/%s/PARAM.SFO",d.d_name);
+        if(sfo_contains(sfo,"PS2 Classics") ||
+           sfo_contains(sfo,"PS2 Launcher") ||
+           sfo_contains(sfo,"PS2 Placeholder") ||
+           sfo_contains(sfo,"PS2 ISO Launcher")) {
+           snprintf(target,cap,"%s",boot);
+           sysLv2FsCloseDir(fd);
+           return 1;
+        }
+    }
+    sysLv2FsCloseDir(fd);
+    return 0;
+}
 static void launch_selected(void) {
     char encoded[1500],command[1600],error_text[120];
     const char *target;
+    char ps2_launcher[560]={0};
+    int ps2_launcher_found=0;
     Entry *game;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
@@ -523,10 +573,7 @@ static void launch_selected(void) {
         snprintf(message,sizeof(message),"INVALID GAME PATH");
         show_error=show_details=1;return;
     }
-    if(tab==0 && !folder_exists("/dev_hdd0/game/PS2U10000")) {
-        snprintf(message,sizeof(message),"PS2 CLASSICS LAUNCHER IS MISSING");
-        show_error=show_details=1;return;
-    }
+    if(tab==0) ps2_launcher_found=find_ps2_launcher(ps2_launcher,sizeof(ps2_launcher));
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
     snprintf(message,sizeof(message),"MOUNTING GAME WITH WEBMAN...");
     show_details=1;show_error=0;render();
@@ -534,8 +581,13 @@ static void launch_selected(void) {
         snprintf(message,sizeof(message),"WEBMAN MOUNT FAILED - ENABLE HEN");
         show_error=show_details=1;return;
     }
-    target=tab==1?"/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN":
-                   "/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN";
+    if(tab==0 && !ps2_launcher_found) {
+        snprintf(message,sizeof(message),
+            "PS2 MOUNTED - OPEN YOUR CLASSICS LAUNCHER FROM XMB");
+        show_details=1;show_error=0;
+        return;
+    }
+    target=tab==1?"/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN":ps2_launcher;
     /* Let the virtual disc filesystem settle after the mount command. */
     usleep(850000);
     if(!has_boot_file(target)) {
