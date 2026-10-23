@@ -338,7 +338,7 @@ static int webman_http(const char *endpoint) {
     server.sin_addr.s_addr=htonl(0x7f000001);
     server.sin_port=htons(80);
     if(connect(fd,(struct sockaddr *)&server,sizeof(server))<0){close(fd);return 0;}
-    snprintf(req,sizeof(req),"GET %s HTTP/1.0\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n",endpoint);
+    snprintf(req,sizeof(req),"GET %s HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",endpoint);
     len=strlen(req);
     total=0;
     while(total<(int)len) {
