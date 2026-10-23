@@ -11,6 +11,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <sysmodule/sysmodule.h>
 #include <sysutil/sysutil.h>
 #include <io/pad.h>
@@ -733,34 +734,99 @@ static void find_ps2_classics_id(char *out,size_t cap) {
     }
     sysLv2FsCloseDir(fd);
 }
-/* NOVA 1.8.
+/* NOVA 1.9.
  *
  * Console results so far:
- *   1.6 PS3: proven in-game /mount_ps3, then the chain below ending in
- *            /play.ps3?col=game&seg=seg_device  ->  THE GAME STARTED.
- *            First one-press PS3 launch since 0.5. Kept byte-for-byte.
- *   1.6 PS2: the same chain pressed X on the NOVA icon (NOVA re-opened):
- *            the chain survives NOVA's exit and X is pressed, but
- *            "seg=<title id>" is not an XMB segment, so focus never moved.
+ *   1.6/1.8 PS3: in-game /mount_ps3, then a chained
+ *       /play.ps3?col=game&seg=seg_device run by webMAN after NOVA exits
+ *       -> THE GAME STARTS. Kept unchanged.
+ *   1.6/1.8 PS2: the chain pressed X on the NOVA icon. The Placeholder
+ *       sits in the plain installed-apps list (photo: between Apollo and
+ *       mmCM), which no XMB segment name can target, and HEN has no
+ *       /app_home segment for webMAN's /play.ps3?<titleid> route.
  *
- * 1.8 changes ONLY the PS2 launch command: webMAN's documented
- * /play.ps3?<titleid> (include/cmd/pad_combo_play.h: "mount npdrm game
- * and start game from app_home icon"), which focuses an explicit XMB
- * segment (seg_gamedebug) before pressing X. Two popups bracket the
- * launch step so a failure can be located.
+ * 1.9 gives the Placeholder a segment of its own. HEN's category_game.xml
+ * carries hook entries (external_xmb, hen_toolbox_xmb, ...) that load an
+ * XML file if it exists. NOVA writes a one-item XML into the first unused
+ * hook; its content mirrors HEN's own seg_gamedebug view (child=segment)
+ * but queries the Placeholder by title ID, exactly like webMAN's
+ * QUERY_PS2_LAUNCHER (include/scan/games_xml.h). The XMB then shows the
+ * Placeholder inline under that hook, and
+ *     /play.ps3?col=game&seg=<hook>
+ * is the same focus-segment-then-push route webMAN uses for /app_home on
+ * CFW. /xmb.ps3$home* makes the XMB reload the Game column first.
  */
 #define NOVA_CHAIN_PREFIX "/wait.ps3?3;/wait.ps3?xmb;/wait.ps3?5;" \
-                          "/popup.ps3?NOVA%201.8%20step%201%3A%20XMB%20ready;"
-#define NOVA_CHAIN_SUFFIX ";/popup.ps3?NOVA%201.8%20step%202%3A%20launch%20command%20finished"
-static int build_xmb_launch_chain(int ps3,const char *titleid,char *out,size_t cap) {
+                          "/popup.ps3?NOVA%201.9%20step%201%3A%20XMB%20ready;"
+#define NOVA_CHAIN_SUFFIX ";/popup.ps3?NOVA%201.9%20step%202%3A%20launch%20command%20finished"
+#define HEN_CATEGORY_GAME_XML "/dev_flash/vsh/resource/explore/xmb/category_game.xml"
+
+static int has_boot_file(const char *path);
+static const char *nova_hook_keys[]={
+    "hen_toolbox_xmb","henbrew_store_xmb","ps3xploit_xmb","game_xmbm_hdd0","external_xmb",NULL};
+
+/* Find a hook in HEN's Game column: key="<hook>" src="xmb://localhost<path>#<view>".
+ * Picks the first hook whose XML file does not exist yet (or is already
+ * NOVA's own). Returns 1 and fills key/path/view. */
+static int find_free_hen_hook(char *key,size_t kcap,char *path,size_t pcap,char *view,size_t vcap) {
+    static char xml[65536];
+    size_t n; int i;
+    FILE *f=fopen(HEN_CATEGORY_GAME_XML,"rb");
+    if(!f)return 0;
+    n=fread(xml,1,sizeof(xml)-1,f); fclose(f); xml[n]=0;
+    for(i=0;nova_hook_keys[i];i++) {
+        char needle[64],*p,*src,*hash,*q;
+        snprintf(needle,sizeof(needle),"key=\"%s\"",nova_hook_keys[i]);
+        p=strstr(xml,needle); if(!p)continue;
+        src=strstr(p,"src=\"xmb://localhost"); if(!src || src-p>300)continue;
+        src+=strlen("src=\"xmb://localhost");
+        hash=strchr(src,'#'); q=hash?strchr(hash,'"'):NULL;
+        if(!hash || !q || (size_t)(hash-src)>=pcap || (size_t)(q-hash-1)>=vcap)continue;
+        memcpy(path,src,hash-src); path[hash-src]=0;
+        memcpy(view,hash+1,q-hash-1); view[q-hash-1]=0;
+        if(!strncmp(path,"/dev_usb",8) && !folder_exists("/dev_usb000"))continue;
+        if(has_boot_file(path)) {            /* someone else's XML? keep it */
+            if(!sfo_has_words(path,"STATION NOVA"))continue;
+        }
+        snprintf(key,kcap,"%s",nova_hook_keys[i]);
+        return 1;
+    }
+    return 0;
+}
+static int write_nova_hook_xml(const char *path,const char *view,const char *titleid) {
+    char dir[512],*slash; FILE *f;
+    snprintf(dir,sizeof(dir),"%s",path);
+    slash=strrchr(dir,'/'); if(!slash)return 0; *slash=0;
+    if(!folder_exists(dir)) {
+        char up[512]; char *s2;
+        snprintf(up,sizeof(up),"%s",dir); s2=strrchr(up,'/');
+        if(s2 && s2!=up){*s2=0; if(!folder_exists(up))mkdir(up,0777);}
+        mkdir(dir,0777);
+    }
+    f=fopen(path,"wb"); if(!f)return 0;
+    fprintf(f,
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+      "<!-- STATION NOVA: PS2 Classics launch segment. A query with no icon/title\n"
+      "     table is spliced inline into the Game column, like seg_device. -->\n"
+      "<XMBML version=\"1.0\">\n"
+      "<View id=\"%s\">\n"
+      "<Attributes><Table key=\"nova_ps2_info\">"
+      "<Pair key=\"title\"><String>STATION NOVA PS2</String></Pair>"
+      "</Table></Attributes>\n"
+      "<Items><Query class=\"type:x-xmb/folder-pixmap\" key=\"nova_ps2\" "
+      "src=\"xcb://0/query?limit=1&cond=Ae+Game:Game.titleId %s\"/></Items>\n"
+      "</View>\n</XMBML>\n",view,titleid);
+    fclose(f);
+    return 1;
+}
+static int build_xmb_launch_chain(int ps3,const char *hook_key,char *out,size_t cap) {
     int n;
     if(ps3)
         n=snprintf(out,cap,"%s/play.ps3?col=game&seg=seg_device%s",NOVA_CHAIN_PREFIX,NOVA_CHAIN_SUFFIX);
     else {
-        size_t i;
-        if(!titleid || strlen(titleid)!=9)return 0;
-        for(i=0;i<9;i++)if(!isalnum((unsigned char)titleid[i]))return 0;
-        n=snprintf(out,cap,"%s/play.ps3?%s%s",NOVA_CHAIN_PREFIX,titleid,NOVA_CHAIN_SUFFIX);
+        if(!hook_key || !*hook_key)return 0;
+        n=snprintf(out,cap,"%s/xmb.ps3$home*;/wait.ps3?3;/play.ps3?col=game&seg=%s%s",
+                   NOVA_CHAIN_PREFIX,hook_key,NOVA_CHAIN_SUFFIX);
     }
     return n>0 && (size_t)n<cap;
 }
@@ -800,7 +866,7 @@ static int has_boot_file(const char *path) {
 static void log_launch_stage(const char *stage,const Entry *game,const char *target) {
     FILE *f=fopen("/dev_hdd0/tmp/station_nova_launch.log","wb");
     if(!f)return;
-    fprintf(f,"STATION NOVA 1.8\nplatform=%s\nstage=%s\n",
+    fprintf(f,"STATION NOVA 1.9\nplatform=%s\nstage=%s\n",
             tab==1?"PS3":"PS2",stage);
     fprintf(f,"game=%.119s\n",game?game->title:"<none>");
     fprintf(f,"source=%.479s\n",game?game->path:"<none>");
@@ -845,7 +911,7 @@ static void clear_legacy_pending_requests(void) {
  * scanning, not an EBOOT path). R2+X remains mount-only fallback.
  */
 static void launch_selected(void) {
-    char encoded[1500],command[1600],chain[400],titleid[16]={0};
+    char encoded[1500],command[1600],chain[400],titleid[16]={0},hook[32]={0};
     Entry *game;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
@@ -876,11 +942,22 @@ static void launch_selected(void) {
         return;
     }
 
-    if(tab==0)find_ps2_classics_id(titleid,sizeof(titleid));
-    if(!build_xmb_launch_chain(tab==1,titleid,chain,sizeof(chain))) {
+    if(tab==0) {
+        char hpath[256],hview[64];
+        find_ps2_classics_id(titleid,sizeof(titleid));
+        if(!find_free_hen_hook(hook,sizeof(hook),hpath,sizeof(hpath),hview,sizeof(hview)) ||
+           !write_nova_hook_xml(hpath,hview,titleid)) {
+            snprintf(message,sizeof(message),"PS2 MOUNTED - OPEN CLASSICS IN XMB");
+            show_details=1;show_error=0;exit_frames=65;
+            log_launch_stage("no_free_hen_hook",game,HEN_CATEGORY_GAME_XML);
+            return;
+        }
+        log_launch_stage("hook_xml_written",game,hpath);
+    }
+    if(!build_xmb_launch_chain(tab==1,hook,chain,sizeof(chain))) {
         snprintf(message,sizeof(message),"MOUNTED - START FROM XMB");
         show_details=1;show_error=0;exit_frames=65;
-        log_launch_stage("chain_build_failed",game,titleid);
+        log_launch_stage("chain_build_failed",game,hook);
         return;
     }
     log_launch_stage("xmb_chain_sending",game,chain);

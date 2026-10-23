@@ -1,6 +1,6 @@
-# STATION NOVA 1.8 — PS3 one-press CONFIRMED, PS2 target fixed
+# STATION NOVA 1.9 — PS3 one-press confirmed; PS2 gets its own XMB segment
 
-**Separate installer, STN000018.** Installs alongside earlier versions; overwrites nothing.
+**Separate installer, STN000019.** Installs alongside earlier versions; overwrites nothing.
 
 ## Why 1.2–1.5 mounted but never launched (from webMAN-MOD source)
 
@@ -16,12 +16,14 @@
 - 1.6 PS2: the chain pressed X on the NOVA icon (NOVA re-opened), proving the chain survives exit and X is pressed; `seg=<title id>` was not a valid XMB segment, so focus never moved.
 - 1.7 replaced the working PS3 route with `/play.ps3<path>`; it was never console-tested and is superseded.
 
-## What 1.8 does on X
+## What 1.9 does on X
 
-- **PS3:** identical to 1.6.
-- **PS2:** proven in-game `/mount_ps3` prepares the Classics placeholder; after NOVA exits, webMAN runs its documented `/play.ps3?<Classics title ID>` ("start installed title from app_home icon"), which focuses an explicit XMB segment before pressing X.
+- **PS3:** identical to 1.6/1.8 (console-confirmed).
+- **PS2:** the Placeholder lives in the plain installed-apps list (photo: between Apollo and mmCM), which no XMB segment name can target, and HEN has no `/app_home` segment for webMAN's `/play.ps3?<titleid>` route (that is why 1.8 pressed X on NOVA). So NOVA gives the Placeholder a segment of its own: HEN's `category_game.xml` has hook entries (`hen_toolbox_xmb`, `henbrew_store_xmb`, `ps3xploit_xmb`, `game_xmbm_hdd0`, `external_xmb`) that load an XML file if present. NOVA reads the console's own `category_game.xml`, picks the first unused hook, and writes a one-item XML whose query selects the Placeholder by title ID (the same `xcb://0/query?limit=1&cond=Ae+Game:Game.titleId PS2U10000` webMAN uses for its own PS2 launcher entry). With no icon/title table the result is spliced inline, like `seg_device`. The chain then runs `/xmb.ps3$home*` (reload Game column) and `/play.ps3?col=game&seg=<hook>` — the same focus-segment-then-push route that launches PS3 discs in 1.6.
 
-Chain: `/wait.ps3?3 ; /wait.ps3?xmb ; /wait.ps3?5 ; /popup.ps3?NOVA 1.8 step 1: XMB ready ; <launch> ; /popup.ps3?NOVA 1.8 step 2: launch command finished`
+Side effect: a second "PS2 Classics Placeholder" icon appears near the top of the Game column. The XML stays so the icon persists across reboots; delete `/dev_hdd0/game/HENTOOLBX/USRDIR/hen_toolbox_xmb.xml` (or whichever hook the launch log names) to remove it.
+
+Chain (PS2): `/wait.ps3?3 ; /wait.ps3?xmb ; /wait.ps3?5 ; popup step 1 ; /xmb.ps3$home* ; /wait.ps3?3 ; /play.ps3?col=game&seg=<hook> ; popup step 2`
 
 ## Reading the test
 
