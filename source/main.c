@@ -35,6 +35,7 @@
 #define PAD_RIGHT   0x2000
 #define PAD_UP      0x1000
 #define PAD_CROSS   0x0040
+#define PAD_SQUARE  0x0080
 #define PAD_CIRCLE  0x0020
 #define PAD_TRIANGLE 0x0010
 #define PAD_R1      0x0008
@@ -55,6 +56,7 @@ static pngData cover_data[PER_PAGE];
 static u32 font_offset=0;
 static char message[128]="SELECT A GAME TO PLAY";
 static int show_error=0;
+static int network_ready=0;
 
 static const u32 C_BG=RGBA(10,15,27,255);
 static const u32 C_CARD=RGBA(23,33,55,255);
@@ -315,6 +317,91 @@ static void render(void) {
     text(656,483,"O  EXIT  /  L1 R1",3,C_MUTED,26);
     tiny3d_Flip();
 }
+
+/* webMAN runs on the console's localhost interface. We never touch the
+ * PS2 Classics encrypted files or rewrite system game folders ourselves.
+ * Responses are checked before reporting a successful hand-off. */
+static int webman_http(const char *endpoint) {
+    struct sockaddr_in server;
+    struct timeval t={3,0};
+    int fd;
+    int sent,total,received;
+    char req[1950],response[256];
+    size_t len;
+    if(!network_ready)return 0;
+    fd=socket(PF_INET,SOCK_STREAM,IPPROTO_TCP);
+    if(fd<0)return 0;
+    setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&t,sizeof(t));
+    setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&t,sizeof(t));
+    memset(&server,0,sizeof(server));
+    server.sin_family=AF_INET;
+    server.sin_addr.s_addr=htonl(0x7f000001);
+    server.sin_port=htons(80);
+    if(connect(fd,(struct sockaddr *)&server,sizeof(server))<0){close(fd);return 0;}
+    snprintf(req,sizeof(req),"GET %s HTTP/1.0\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n",endpoint);
+    len=strlen(req);
+    total=0;
+    while(total<(int)len) {
+        sent=send(fd,req+total,len-total,0);
+        if(sent<=0){close(fd);return 0;}
+        total+=sent;
+    }
+    received=recv(fd,response,sizeof(response)-1,0);
+    close(fd);
+    if(received<=0)return 0;
+    response[received]=0;
+    return strstr(response," 200 ") || strstr(response," 202 ") || strstr(response," 302 ");
+}
+static int encode_game_path(const char *path,char *encoded,size_t capacity) {
+    static const char hex[]="0123456789ABCDEF";
+    size_t o=0,i;
+    if(strncmp(path,"/dev_hdd0/",10))return 0;
+    for(i=0;path[i];i++) {
+        unsigned char c=(unsigned char)path[i];
+        if(o+4>=capacity)return 0;
+        if(isalnum(c)||c=='/'||c=='-'||c=='_'||c=='.'||c=='('||c==')'||c=='['||c==']')encoded[o++]=c;
+        else {
+            encoded[o++]='%';
+            encoded[o++]=hex[c>>4];
+            encoded[o++]=hex[c&15];
+        }
+    }
+    encoded[o]=0;
+    return 1;
+}
+static void launch_selected(void) {
+    char encoded[1500],command[1600];
+    Entry *game;
+    if(!count[tab])return;
+    game=&games[tab][chosen[tab]];
+    if(!encode_game_path(game->path,encoded,sizeof(encoded))) {
+        snprintf(message,sizeof(message),"INVALID GAME PATH");
+        show_error=show_details=1;
+        return;
+    }
+    if(tab==0 && !folder_exists("/dev_hdd0/game/PS2U10000/USRDIR")) {
+        snprintf(message,sizeof(message),"INSTALL PS2 CLASSICS LAUNCHER FIRST");
+        show_error=show_details=1;
+        return;
+    }
+    snprintf(command,sizeof(command),"/%s/%s",tab==0?"mount.ps3":"play.ps3",encoded);
+    if(!webman_http(command)) {
+        snprintf(message,sizeof(message),"WEBMAN NOT RESPONDING - ENABLE HEN");
+        show_error=show_details=1;
+        return;
+    }
+    if(tab==0) {
+        /* Mount encrypted BIN.ENC via webMAN, then request its installed
+         * PS2 Classics Launcher by the established PS2U10000 title ID. */
+        usleep(900000);
+        if(!webman_http("/play.ps3?PS2U10000")) {
+            snprintf(message,sizeof(message),"PS2 MOUNTED; START CLASSICS IN XMB");
+            show_error=show_details=1;
+            return;
+        }
+    }
+    keep_running=0; /* hand control to webMAN/XMB */
+}
 static void callback(u64 status,u64 param,void *userdata) {
     (void)param;(void)userdata;
     if(status==SYSUTIL_EXIT_GAME)keep_running=0;
@@ -329,6 +416,7 @@ int main(void) {
     texture_mem=tiny3d_AllocTexture(TEX_BUDGET);
     font_setup();
     ioPadInit(7);
+    network_ready=(netInitialize()>=0);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0,callback,NULL);
     refresh();
     while(keep_running) {
@@ -341,7 +429,7 @@ int main(void) {
         }
         pressed=buttons & ~previous;
         previous=buttons;
-        if(pressed & PAD_CIRCLE) keep_running=0;
+        if(pressed & PAD_CIRCLE) {if(show_details){show_details=0;show_error=0;}else keep_running=0;}
         if(pressed & PAD_L1) {tab=0;show_details=0;}
         if(pressed & PAD_R1) {tab=1;show_details=0;}
         if(pressed & PAD_TRIANGLE) refresh();
@@ -349,7 +437,8 @@ int main(void) {
         if(pressed & PAD_RIGHT && chosen[tab]<count[tab]-1) {chosen[tab]++;show_details=0;}
         if(pressed & PAD_UP && chosen[tab]>=GRID_COLS) {chosen[tab]-=GRID_COLS;show_details=0;}
         if(pressed & PAD_DOWN && chosen[tab]+GRID_COLS<count[tab]) {chosen[tab]+=GRID_COLS;show_details=0;}
-        if(pressed & PAD_CROSS && count[tab]) show_details=!show_details;
+        if(pressed & PAD_SQUARE && count[tab]) {show_error=0;show_details=!show_details;}
+        if(pressed & PAD_CROSS && count[tab]) launch_selected();
         offset[tab]=(chosen[tab]/PER_PAGE)*PER_PAGE;
         if(loaded_tab!=tab || loaded_offset!=offset[tab])covers_for_page();
         render();
@@ -357,6 +446,7 @@ int main(void) {
     }
     sysUtilUnregisterCallback(SYSUTIL_EVENT_SLOT0);
     ioPadEnd();
+    if(network_ready)netDeinitialize();
     sysModuleUnload(SYSMODULE_PNGDEC);
     sysModuleUnload(SYSMODULE_FS);
     return 0;
