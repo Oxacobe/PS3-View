@@ -747,27 +747,28 @@ static void find_ps2_classics_id(char *out,size_t cap) {
 #define NOVA_WM_REQUEST_FILE "/dev_hdd0/tmp/wm_request"
 static int schedule_webman_xmb_play(const char *command) {
     int fd;
-    char req[180];
     size_t n;
     ssize_t sent;
     if(!command || strncmp(command,"/play.ps3",9)!=0)return 0;
-    /* Bare URL is a valid webMAN request-file payload; upstream prepends
-     * GET if missing. Include a complete HTTP/1.0 request for clarity. */
-    snprintf(req,sizeof(req),
-        "GET %s HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
-        command);
-    n=strlen(req);
-    if(n==0 || n>=sizeof(req)-1)return 0;
+    /* IMPORTANT upstream parser detail: webMAN www_client.h accepts a
+     * bare /play.ps3 request and PREPENDS the GET verb automatically.
+     * It also rewrites embedded spaces to '+' before parsing. A complete
+     * HTTP/1.0 request in wm_request could mistakenly become part of the
+     * URL, so write ONLY the documented bare endpoint here. */
+    n=strlen(command);
+    if(n<=5 || n>=80)return 0;
     fd=open(NOVA_WM_REQUEST_FILE,O_WRONLY|O_CREAT|O_EXCL,0644);
     if(fd<0)return 0;
-    sent=write(fd,req,n);
+    sent=write(fd,command,n);
     if(sent!=(ssize_t)n) {
         close(fd);
-        /* The file is ours only because O_EXCL succeeded. */
+        unlink(NOVA_WM_REQUEST_FILE); /* ours: O_EXCL succeeded */
+        return 0;
+    }
+    if(close(fd)!=0) {
         unlink(NOVA_WM_REQUEST_FILE);
         return 0;
     }
-    if(close(fd)!=0)return 0;
     return 1;
 }
 static int encode_game_path(const char *path,char *encoded,size_t capacity) {
