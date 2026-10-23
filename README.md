@@ -1,50 +1,52 @@
-# STATION NOVA XMB 1.0 — isolated PS3/PS2 launch handoff prototype
+# STATION NOVA CINEMA 1.1 — premium two-stage PS3 / PS2 library
 
-**Separate application:** XMB title `STATION NOVA XMB`, ID `STN000010`. Installing it does **not** replace STATION NOVA 0.7, PLAY 0.8 or ALL 0.9.
+**PS3 application:** STATION NOVA CINEMA, separate title ID `STN000011`. It does not replace any previous NOVA version. **New XMB icon**: custom graphite/orange folded-N wordmark; **new 4-row interface**: modern cinema treatment of the existing 0.7 GPU gallery.
 
-## Why the launch model changed
+## The known reliable workflow
 
-NOVA ALL 0.9 showed a black screen for PS3 games and restarting the application after the failed launch rebooted the PS3. PS2 Classics also failed. **Do not keep testing 0.9.**
+The user's console has successfully launched PS3 games from **webMAN MOD**, and PS2 games by **mounting their encrypted .BIN.ENC with webMAN, then selecting PS2 Classics Launcher/Placeholder from XMB**. On HEN these two are different launch flows.
 
-webMAN MOD documents:
-- `/mount_ps3<game path>` for mounting a game from inside another game/homebrew
-- `/play.ps3` for launching the mounted PS3 disc from XMB
-- `/play.ps3?PS2U10000` for requesting the standard PS2 Classics Placeholder/Launcher
-- `/dev_hdd0/onxmb.bat` as an event script run when XMB loads or returns.
+From NOVA CINEMA:
 
-The previous experiments called `sysProcessExitSpawn2` on disc `EBOOT.BIN` or arbitrary PS2 launcher EBOOTs. **NOVA XMB does not directly spawn commercial-game executables.** It requests execution from the XMB via webMAN.
+1. Open the app with HEN enabled normally and webMAN running.
+2. Choose an installed PS3 ISO/folder game or encrypted PS2 `.BIN.ENC` and press **X**. NOVA calls webMAN `/mount_ps3<encoded-game-path>`. It does **not** attempt to start `EBOOT.BIN` itself.
+3. NOVA shows which XMB icon to open and exits cleanly.
+4. **PS3:** choose the now-mounted *disc* game icon under XMB's Game column to start the PS3 game.
+5. **PS2:** choose your **PS2 Classics Launcher / Placeholder** icon under XMB's Game column to start the already-mounted game.
 
-## How one-press launching is attempted
+**This is intentionally two-stage, not one-click auto-play.** It's an explicit recovery to the console's previously successful methods, and it does not pretend a cloud build proves more than that. Once this route is verified end-to-end, we can add optional auto-launch without risking these known-good basics.
 
-1. User selects a PS3 or PS2 game and presses X in the same 4-row, 8-column cover gallery.
-2. For PS2, require the actual `/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN` Placeholder. Do NOT scan or launch arbitrary installed games.
-3. Ensure a tiny NOVA-owned webMAN script exists at `/dev_hdd0/onxmb.bat`, but **never overwrite or append to a user-existing different script**. If another script exists, display an error and leave the script and console untouched.
-4. Mount the selected game using webMAN `/mount_ps3`.
-5. Create only one of two one-use files: `/dev_hdd0/tmp/nova_xmb_ps3.once` or `/dev_hdd0/tmp/nova_xmb_ps2.once`.
-6. Exit NOVA normally. On its next XMB event, webMAN's small script deletes the marker **before** launching `/play.ps3` (PS3) or `/play.ps3?PS2U10000` (PS2). This should prevent repeated auto-launch cycles.
-7. No permanent resident STATION plugin is installed. The inert event script remains until removed manually, but does nothing when neither marker exists.
+## Bugs removed since 0.9–1.0
 
-**This is an experimental integration.** GitHub compilation does not establish that your specific webMAN/HEN version runs the XMB event before or after returning from NOVA or launches the selected game.
+- No direct `sysProcessExitSpawn2` of retail PS3 EBOOTs or PS2 Placeholder EBOOTs (caused black screens/restarts).
+- No hard-coded check of `/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN` (falsely reported PS2 Placeholder missing).
+- No new `onxmb.bat` scripts, no marker writes, and no automatic launch triggers.
+- At app startup, NOVA removes **only** old NOVA-1.0 marker files `/dev_hdd0/tmp/nova_xmb_ps3.once` and `/dev_hdd0/tmp/nova_xmb_ps2.once`. It does **not** modify an existing `onxmb.bat`; a previous NOVA-owned copy remains inert without marker files.
+- Never rewrite ISO, BIN.ENC, PS2 CONFIG, webMAN config, installed games, or save files.
 
-## Recovery and file-system safety
+If you wish to manually remove old NOVA 1.0's `/dev_hdd0/onxmb.bat`, **only rename it if its first line is exactly** `# STATION NOVA XMB HANDOFF 1.0`. Preserve an `onxmb.bat` of any other origin.
 
-- Installing the app alone does **not** create the script or markers. They are created only on a selected game's first launch attempt.
-- We never modify your `boot_plugins.txt`, webMAN settings, game ISO, encryption keys, installed Placeholder or save files.
-- If the console unexpectedly restarts before the one-use marker was consumed, it may be triggered the next time XMB loads. **To cancel a pending launch**, use IrisMAN to delete both `/dev_hdd0/tmp/nova_xmb_ps3.once` and `/dev_hdd0/tmp/nova_xmb_ps2.once` before re-enabling HEN. If HEN cannot enable normally, use the established plugin-bypass process first.
-- If you remove this test app, you may also delete `/dev_hdd0/onxmb.bat` **only after confirming it begins with** `# STATION NOVA XMB HANDOFF 1.0`. Never delete an existing non-NOVA script.
-- A diagnostic log recording the last stage is written to `/dev_hdd0/tmp/station_nova_launch.log`.
+## Interface
 
-## Preserved interface
+- Preserved **eight covers per row, two PS3 rows and two PS2 Classics rows**.
+- Refreshed premium graphite/glass/orange visual language. XMB icon now custom angular N with strong typography.
+- Streaming one cover at a time, 3 MB gallery texture cap, safe PNG screening, aspect-ratio preservation.
+- **Hold L2 while opening:** artwork-safe mode to skip cover decoding.
+- **X:** webMAN mount then return to XMB. **Square/Select:** library search. **Triangle:** rescan. **Circle:** exit. D-pad navigates the 4-row grid.
+- After a mount attempt, diagnostics: `/dev_hdd0/tmp/station_nova_launch.log`.
 
-Same NOVA 0.7 layout: two PS3 rows and two PS2 rows, eight covers across, progressive cover loading, L2 no-art startup mode, controller navigation and local search.
+## Hardware caveat
 
-## Recommended testing precautions
+The package is compiled in the cloud with PSL1GHT/Tiny3D via GitHub Actions. A successful build does not guarantee a particular PS3/HEN installation has no plugin instability. Do **not** test this while HEN is still freezing or returning disabled. If you are recovering from 1.0, check for pending launcher markers before using XMB.
 
-First confirm HEN enables normally and a PS3 title runs through webMAN's own XMB menu. If console behaviour remains unstable, **do not install or test this prototype**. The software is still experimental.
+## Sources & history
 
-The exact former source versions remain available:
-- [0.5 PS3 launch reference](https://github.com/Oxacobe/PS3-View/tree/recovery/ps3-one-press-confirmed-v0.5)
-- [0.7 UI reference](https://github.com/Oxacobe/PS3-View/tree/recovery/nova-0.7-ui-and-streaming)
-- [0.9 pre-XMB source](https://github.com/Oxacobe/PS3-View/tree/recovery/nova-0.9-before-xmb-handoff)
+[webMAN MOD game paths and PS2 Classics requirements](https://github.com/aldostools/webMAN-MOD/wiki/Game-Paths-%26-Covers)
 
-Documentation: https://github.com/aldostools/webMAN-MOD/wiki/Web-Commands
+[webMAN MOD official mount and XMB play commands](https://github.com/aldostools/webMAN-MOD/wiki/Web-Commands)
+
+Preserved project source milestones:
+
+- [PS3 handoff 0.5](https://github.com/Oxacobe/PS3-View/tree/recovery/ps3-one-press-confirmed-v0.5)
+- [NOVA 0.7 gallery](https://github.com/Oxacobe/PS3-View/tree/recovery/nova-0.7-ui-and-streaming)
+- [XMB 1.0 experimental handoff](https://github.com/Oxacobe/PS3-View/tree/recovery/nova-1.0-xmb-experiment)
