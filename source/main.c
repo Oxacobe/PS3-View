@@ -506,7 +506,7 @@ static void render(void) {
     rect(23,13,4,23,C_ACCENT);
     text(37,10,"STATION",9,C_TEXT,11);
     text(258,20,"NOVA",5,C_ACCENT,5);
-    text(298,21,"0.8 PLAY",3,C_MUTED,11);
+    text(298,21,"0.9 ALL",3,C_MUTED,11);
     if(matches[tab] && chosen[tab]<matches[tab])
         active=&games[tab][matching[tab][chosen[tab]]];
     if(active)snprintf(selection,sizeof(selection),"%.38s",active->title);
@@ -645,7 +645,7 @@ static int find_ps2_launcher(char *target,size_t cap) {
 static void log_launch_stage(const char *stage,const Entry *game,const char *target) {
     FILE *f=fopen("/dev_hdd0/tmp/station_nova_launch.log","wb");
     if(!f)return;
-    fprintf(f,"STATION NOVA PLAY 0.8\nplatform=%s\nstage=%s\n",
+    fprintf(f,"STATION NOVA ALL 0.9\nplatform=%s\nstage=%s\n",
             tab==1?"PS3":"PS2",stage);
     fprintf(f,"game=%.119s\n",game?game->title:"<none>");
     fprintf(f,"source=%.479s\n",game?game->path:"<none>");
@@ -661,6 +661,29 @@ static int wait_for_launch_target(const char *target,int tries) {
         usleep(250000);
     }
     return has_boot_file(target);
+}
+/* Legacy PS2 Classics integration from STATION 0.2:
+ * after mounting a .BIN.ENC, ask webMAN to start the installed launcher
+ * title PS2U10000. Request can be queued for the XMB context; HTTP 200
+ * only means it was accepted, not that the PS2 game has started. */
+static void ps2_legacy_handoff(Entry *game,const char *reason) {
+    int accepted;
+    (void)reason;
+    snprintf(message,sizeof(message),"STARTING CLASSICS VIA WEBMAN...");
+    show_details=1;show_error=0;
+    log_launch_stage("ps2_legacy_play_ps3",game,"PS2U10000");
+    render();
+    accepted=webman_http("/play.ps3?PS2U10000");
+    if(accepted) {
+        snprintf(message,sizeof(message),"PS2 CLASSICS LAUNCH REQUESTED");
+        show_details=1;show_error=0;
+        /* webMAN needs to reach the XMB to start NPDRM title icon. */
+        exit_frames=15;
+    } else {
+        snprintf(message,sizeof(message),"PS2 LAUNCHER REQUEST FAILED - CHECK WEBMAN");
+        show_details=1;show_error=1;
+        log_launch_stage("ps2_legacy_http_failed",game,"PS2U10000");
+    }
 }
 static void launch_selected(void) {
     char encoded[1500],command[1600],ps2_launcher[560]={0};
@@ -697,9 +720,9 @@ static void launch_selected(void) {
     log_launch_stage("mount_http_accepted",game,target);
 
     if(tab==0 && !ps2_launcher_found) {
-        snprintf(message,sizeof(message),"PS2 MOUNTED - USE CLASSICS ICON IN XMB");
-        show_details=1;show_error=0;
-        log_launch_stage("ps2_launcher_not_found",game,NULL);
+        /* Do not block a known-installed launcher because its EBOOT
+         * could not be identified. Restore v0.2's XMB title-ID path. */
+        ps2_legacy_handoff(game,"launcher-not-discovered");
         return;
     }
     snprintf(message,sizeof(message),"WAITING FOR MOUNTED GAME...");
@@ -707,11 +730,14 @@ static void launch_selected(void) {
     /* Do not assume the disc is available in 850 ms; slow webMAN/ISO
      * scans after enabling HEN can take longer. Limit to five seconds. */
     if(!wait_for_launch_target(target,20)) {
+        if(tab==0) {
+            ps2_legacy_handoff(game,"placeholder-eboot-not-ready");
+            return;
+        }
         snprintf(message,sizeof(message),
-            tab==1?"NO DISC BOOT FILE - USE WEBMAN TO LAUNCH":
-                   "PS2 PLACEHOLDER NOT READY - USE XMB ICON");
+            "PS3 DISC BOOT NOT READY - CHECK WEBMAN");
         show_details=1;show_error=1;
-        log_launch_stage("boot_target_not_ready",game,target);
+        log_launch_stage("ps3_boot_target_not_ready",game,target);
         return;
     }
     if(tab==0) {
@@ -724,10 +750,10 @@ static void launch_selected(void) {
             usleep(250000);
         }
         if(!has_boot_file(prepared)) {
-            snprintf(message,sizeof(message),
-                "PS2 IMAGE NOT PREPARED - USE WEBMAN CLASSICS");
-            show_details=1;show_error=1;
-            log_launch_stage("ps2_iso_not_prepared",game,target);
+            /* webMAN can prepare via a file remap or alternate placeholder.
+             * Do not make this a hard failure; try original webMAN title
+             * launch before sending user back to XMB manually. */
+            ps2_legacy_handoff(game,"ps2-bin-enc-not-visible");
             return;
         }
     }
@@ -739,9 +765,15 @@ static void launch_selected(void) {
     sysProcessExitSpawn2(target,NULL,NULL,NULL,0,1001,
                          SYS_PROCESS_SPAWN_STACK_SIZE_1M);
     /* On PSL1GHT the function is void. If it returns, start failed. */
-    snprintf(message,sizeof(message),"DIRECT START RETURNED - USE WEBMAN");
-    show_details=1;show_error=1;exit_frames=0;
     log_launch_stage("spawn_returned",game,target);
+    if(tab==0) {
+        /* Direct replacement returned instead of starting Classics:
+         * use the older webMAN /play.ps3?PS2U10000 handoff automatically. */
+        ps2_legacy_handoff(game,"ps2-spawn-returned");
+        return;
+    }
+    snprintf(message,sizeof(message),"PS3 DIRECT START RETURNED - CHECK WEBMAN");
+    show_details=1;show_error=1;exit_frames=0;
 }
 static void online_lookup(void) {
     char path[640];
