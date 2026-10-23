@@ -1,23 +1,38 @@
-# STATION · PlayStation 3 library
+# STATION · PS3 View
 
-A standalone PS3 homebrew library browser for PS3HEN and webMAN MOD. This project is **independent of** webMAN, HEN, IRISMAN, PS2 Classics Placeholder, the games and savedata.
+A standalone PS3 homebrew game-library interface for PS3HEN, webMAN MOD and PS2 Classics.
 
-**Status:** Early native proof of concept. The first release scans game directories and draws a controller-operated library without mounting or altering anything. Do not consider this a finished launcher yet.
+**Status: v0.1 native hardware test.** GitHub Actions successfully compiles this into a real PS3 `station.pkg`. It has **not** been run on the actual console yet.
 
-## Goals
-- Native PS3 Game-menu app, fullscreen cover gallery for PS2 and PS3.
-- Read the existing internal game directories; no copying or renaming games.
-- Use the existing webMAN mounting/PS2 Classics launcher pathways when verified.
-- Cloud-compiled with GitHub Actions: no local developer tools on a Mac.
+## Current features
+- Custom STATION icon in the PS3 **Game** menu.
+- Fullscreen dark-mode game gallery with controller navigation.
+- Separate PS2 and PS3 categories (L1/R1).
+- Reads existing internal-drive games:
+  - `/dev_hdd0/PS2ISO/*.BIN.ENC`
+  - `/dev_hdd0/PS3ISO/*.iso`
+  - `/dev_hdd0/GAMES/<game folder>/PS3_GAME/`
+- Displays PNG covers if found beside the game. For a PS2 game `Cars (USA).BIN.ENC`, its artwork is `Cars (USA).BIN.ENC.PNG`. For PS3 folder games, it reads `PS3_GAME/ICON0.PNG`.
+- D-pad navigation, X for detected file details, O to exit, Triangle to rescan.
 
-## Game locations
-- PS2 Classics: `/dev_hdd0/PS2ISO/*.BIN.ENC`
-- PS3 ISO: `/dev_hdd0/PS3ISO/*.iso`
-- PS3 folder: `/dev_hdd0/GAMES/<title>/PS3_GAME/`
+## Safety first
+This v0.1 test intentionally **does not launch or mount games**. It does not delete, copy, convert or modify games, webMAN, HEN, PS2 Classics Placeholder or saved data.
 
-The current native prototype is strictly **read-only**, and selecting a game only displays its source path. Cover display and launching are follow-up phases, not claimed to work already.
+The next phase will add webMAN mounting and PS2 Classics handoff **only after this read-only build has been validated on the user's PS3**. Compiling a PKG is not proof of console compatibility.
 
-## Builds
-Open **Actions → Build STATION PS3 → Run workflow**. The build uses a third-party PS3 toolchain container and uploads compiled artifacts. Only install when the workflow passes and we've checked the output.
+## Cloud build and download
+1. Open [the latest build workflow](https://github.com/Oxacobe/PS3-View/actions/workflows/build.yml).
+2. Select a successful run.
+3. Download the `station-ps3-build` artifact ZIP.
+4. Extract **`station.pkg`** from the ZIP. The archive also contains binaries for diagnostics.
+5. Copy `station.pkg` to a FAT32 USB drive and use the PS3's package installer with HEN enabled.
 
-Native PS3 compatibility must be tested on the console. A successful GitHub compile is not the same as PS3HEN validation.
+No developer tools are needed on your Mac. The build uses a third-party PS3 toolchain container from `ghcr.io/02900/ps3-toolchain-tiny3d:latest`. This dependency is not yet pinned to a reproducible digest.
+
+## Project notes
+- Homebrew application ID: `STN000001` — separate from other installed tools.
+- `source/main.c`: native Tiny3D application.
+- `assets/create_icon.py`: dependency-free generator for the XMB art.
+- `.github/workflows/build.yml`: native cloud compiler + package archive.
+
+STATION is under active development. Do not use it to replace any working launcher.
