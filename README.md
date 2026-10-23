@@ -1,65 +1,62 @@
-# STATION · PS3 View
+# STATION 0.3 — PS3 + PS2 Classics library
 
-An independent, native PS3 game-library interface for PS3HEN, webMAN MOD and PS2 Classics.
+STATION is a native PlayStation 3 homebrew game-library interface that works alongside webMAN MOD, HEN and PS2 Classics Launcher.
 
-**STATION 0.2 — beta, hardware test required for launch paths.** Version 0.1 was confirmed to start successfully on a physical PS3. Version 0.2 adds modern rendering, more cover fallbacks and a webMAN handoff. A green GitHub build proves the installer compiled, **not** that game launching has been verified on the console.
+## Release status
 
-## Interface
+STATION 0.3 has **compiled and packaged successfully on GitHub Actions**. The original 0.1 was tested on PS3 hardware and 0.2.1 started, but the new 0.3 interface and game-mount handoff still require physical-console verification. A successful cross-compile alone does not establish console functionality.
 
-- Contemporary dark gallery with antialiased DejaVu Sans text, clean navigation rail and clear selected-game state
-- PS2/PS3 tabs and eight cover tiles per page
-- Cover images shown at their original aspect ratio, not stretched
-- Checks local PNG files alongside games and common webMAN cover/cache conventions
-- No games changed by the STATION library-scanning logic
+## What's new
 
-### Game sources
+- New high-contrast charcoal/black theme, white text, red focus accent.
+- Redesigned PS3 XMB application artwork.
+- Two visible cover rails: PlayStation 3 above PlayStation 2, five cards per rail.
+- Full-height artwork preserving original proportions, titles beneath covers, horizontal scrolling.
+- Search inside your collection with a controller-driven keyboard. SPACE, DELETE, DONE, CLEAR are built in.
+- Optional ONLINE keyboard action asks webMAN to open a public MobyGames search in the PS3 browser; website compatibility on an older PS3 browser is not guaranteed.
+- webMAN mount request uses its documented `/mount_ps3/<path>` in-game bypass. STATION confirms webMAN's HTTP response and exits to XMB for you to select the mounted game icon.
 
-- PS2: `/dev_hdd0/PS2ISO/*.BIN.ENC`
-- PS3 ISO: `/dev_hdd0/PS3ISO/*.iso`
-- PS3 game folders: `/dev_hdd0/GAMES/<name>/PS3_GAME/`
+## Controller
 
-## Controls
-
-| Button | Function |
+| Button | Action |
 | --- | --- |
-| L1 / R1 | Switch PS2 / PS3 |
-| D-pad | Navigate games |
-| X | Ask webMAN to mount/play selected game |
-| Square | Toggle details |
-| Triangle | Scan games again |
-| Circle | Close details, or exit STATION |
+| Up/Down | Switch between PS3 and PS2 rails |
+| Left/Right | Browse horizontally through games |
+| X | Mount highlighted game using webMAN |
+| Square / Select | Open local-search keyboard |
+| Triangle | Rescan library |
+| Circle | Close message / exit STATION |
 
-## Launch integration — please read before testing
+On the search keyboard, navigate with D-pad and press X to enter characters or select SPACE, DELETE, DONE, ONLINE and CLEAR.
 
-STATION talks to **webMAN MOD on 127.0.0.1:80** using its published HTTP routes:
+## Mounting and launching
 
-- **PS3 ISO/folder:** `/play.ps3/<absolute game path>`. This asks webMAN to mount the game and start it from the XMB, then STATION exits.
-- **PS2 Classics (.BIN.ENC):** verify PS2 Classics Launcher `PS2U10000` is present, call `/mount.ps3/<absolute game path>`, then call `/play.ps3?PS2U10000` to request the installed PS2 Classics Launcher. This is an **experimental handoff** and must be checked on your console.
+- **PS3 ISO and folder games**: Request `/mount_ps3/dev_hdd0/...` from webMAN on 127.0.0.1, return to XMB, then select the mounted disc icon.
+- **PS2 Classics `.BIN.ENC`**: Requires the installed `PS2U10000` PS2 Classics Launcher. Mount through webMAN, return to XMB and select the PS2 Classics Launcher.
+- We intentionally no longer promise seamless one-button automatic startup from inside running STATION: the earlier `/play.ps3` attempt dropped out to XMB without starting the selected game. The PS3/browser/plugin environment makes auto-start from running homebrew less reliable than mounting then launching from XMB.
+- STATION's library scanner does not copy, modify or delete games or saved data. webMAN may perform its normal mount operations when you press X.
 
-If PS2 launch does not complete, the encrypted game may already have been mounted by webMAN; return to XMB and launch PS2 Classics Launcher manually. The app never directly copies, deletes or renames encrypted ISO files. webMAN may manage those files as part of its own normal PS2 mount operation.
+## Scanned paths
 
-**Requirements:** HEN enabled, compatible webMAN MOD running, PS2 Classics Launcher for PS2 games, compatible and properly encrypted PS2 games. STATION cannot guarantee that all PS3 games or PS2 Classics run on every console.
+- PS3 ISO: `/dev_hdd0/PS3ISO/*.iso`
+- PS3 folder games: `/dev_hdd0/GAMES/*/PS3_GAME/`
+- PS2 Classics: `/dev_hdd0/PS2ISO/*.BIN.ENC`
 
-## Install without a Mac toolchain
+Cover lookup: filename.PNG, basename.PNG, lowercase variations, PS3_GAME/ICON0.PNG and some webMAN cache names. Unfound covers show a visible fallback rather than leaving the whole tile blank.
 
-1. Go to [GitHub Actions builds](https://github.com/Oxacobe/PS3-View/actions/workflows/build.yml).
-2. Select the newest **green** build.
-3. Download artifact `station-ps3-build` and unzip it.
-4. Copy **`station.pkg`** to the root of a FAT32 USB stick.
-5. On PS3 enable HEN, then **Game > Package Manager > Install Package Files > Standard**.
-6. Open **STATION** in the PS3 Game menu.
+## Installation
 
-Do not delete the original working 0.1 artifact until version 0.2 has been tested.
+1. Open [STATION builds](https://github.com/Oxacobe/PS3-View/actions/workflows/build.yml).
+2. Select the most recent **green** run.
+3. Download the `station-ps3-build` artifact and extract `station.pkg`.
+4. Copy it to a FAT32 USB drive, enable HEN and install in **Package Manager > Install Package Files > Standard**.
+5. Open the refreshed STATION icon in the Game menu.
+6. First check the interface and both shelves. Then mount a known-good PS3 ISO and confirm its disc icon exists on XMB. Lastly test a known-good encrypted PS2 Classic.
 
-## Cloud build
+## Recovery
 
-The GitHub Actions workflow builds inside `ghcr.io/02900/ps3-toolchain-tiny3d:latest`. It also installs Ubuntu's `python3-pil` and `fonts-dejavu-core` packages, then generates an antialiased bitmap atlas embedded in the binary at build time. No runtime font or cloud connection is needed just to draw the interface.
+The former 0.2.1 code is preserved on the [recovery/station-0.2.1 branch](https://github.com/Oxacobe/PS3-View/tree/recovery/station-0.2.1). The original v0.1 installed successfully on the console and can be recovered from successful GitHub build #6.
 
-Build dependencies are not yet pinned to immutable container digests.
+## Build details
 
-## Safety boundaries
-
-- STATION is a separate homebrew app with ID `STN000001`; it does not replace webMAN, HEN or PS2 Classics Launcher.
-- The library scanner and UI do not move or alter games, configuration files or saved games.
-- On X, STATION asks existing webMAN MOD to perform mounting/launching. **Those requests do have console-side effects managed by webMAN**.
-- This release has not been hardware-verified for launching yet. Test with a known-working PS3 title first, then a known-working PS2 Classics title.
+The cloud build runs PSL1GHT / Tiny3D. XMB art and a DejaVu font atlas are compiled into the package using Pillow on GitHub Actions, with no developer tools required on your Mac. The external container dependency is not yet pinned by image digest.
