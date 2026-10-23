@@ -23,7 +23,8 @@
 #include "ui_font_generated.h"
 
 #define MAX_GAMES 600
-#define PER_PAGE 4
+#define PER_PAGE 16
+#define COLUMNS 8
 #define GRID_COLS 4
 #define FONT_W 512
 #define FONT_H 256
@@ -53,8 +54,9 @@ static int count[2]={0,0}, tab=1, chosen[2]={0,0}, offset[2]={0,0};
 static int matching[2][MAX_GAMES],matches[2]={0,0};
 static char query[24]="";
 static int search_mode=0,keypos=0,exit_frames=0;
+static int focus_row=0; /* screen rows 0,1 for PS3 and 2,3 for PS2 */
 static const char keyboard[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-static int show_details=0, keep_running=1, loaded_tab=-1, loaded_offset=-1;
+static int show_details=0, keep_running=1;
 static int loaded_off[2]={-1,-1};
 static u32 *texture_mem=0;
 static u32 cover_offset[2*PER_PAGE];
@@ -133,14 +135,12 @@ static void text(float x,float y,const char *s,int size,u32 color,int maximum) {
     }
 }
 static void gradient(void) {
-    /* Flat black / red accent, intentionally never blue; unmistakable design. */
-    rect(0,0,848,512,RGBA(5,5,8,255));
-    rect(0,72,848,2,RGBA(54,17,23,255));
-    rect(0,472,848,2,RGBA(54,17,23,255));
-}
-static void frame(float x,float y,float w,float h,int active) {
-    rect(x,y,w,h,active?RGBA(245,28,54,255):RGBA(50,50,54,255));
-    rect(x+2,y+2,w-4,h-4,RGBA(16,16,20,255));
+    /* Dark cinema UI: subtle neutral gradient, never bright blue. */
+    int y;
+    for(y=0;y<512;y+=8) {
+        int v=9+(y<265?y/95:(512-y)/125);
+        rect(0,y,848,8,RGBA(v,v,v+2,255));
+    }
 }
 static int suffix(const char *s,const char *extension) {
     size_t n=strlen(s),e=strlen(extension);
@@ -242,6 +242,8 @@ static void update_filter(void) {
         chosen[p]=0;offset[p]=0;
     }
     loaded_off[0]=loaded_off[1]=-1;
+    focus_row=matches[1]?0:2;
+    tab=matches[1]?1:0;
 }
 static void refresh(void) {
     count[0]=count[1]=0;
@@ -266,7 +268,7 @@ static void covers_for_page(void) {
     unload_covers();
     loaded_off[0]=offset[0];loaded_off[1]=offset[1];
     if(!texture_mem)return;
-    for(p=0;p<2;p++)for(i=0;i<PER_PAGE;i++){
+    for(p=1;p>=0;p--)for(i=0;i<PER_PAGE;i++){
         int idx=offset[p]+i,slot=p*PER_PAGE+i;
         unsigned n;
         pngData tmp;
@@ -290,13 +292,31 @@ static void covers_for_page(void) {
 }
 static void move_selection(int p,int change) {
     int next;
-    if(!matches[p])return;
+    if(matches[p]<=0)return;
     next=chosen[p]+change;
     if(next<0)next=0;
     if(next>=matches[p])next=matches[p]-1;
     chosen[p]=next;
-    if(chosen[p]<offset[p])offset[p]=chosen[p];
-    if(chosen[p]>=offset[p]+PER_PAGE)offset[p]=chosen[p]-(PER_PAGE-1);
+    offset[p]=(next/PER_PAGE)*PER_PAGE;
+    focus_row=(p==1?0:2)+(next-offset[p])/COLUMNS;
+}
+static void navigate_vertical(int direction) {
+    int old_p=focus_row<2?1:0;
+    int column=(chosen[old_p]-offset[old_p])%COLUMNS;
+    int row=focus_row+direction;
+    while(row>=0 && row<4) {
+        int p=row<2?1:0;
+        int begin=offset[p]+(row%2)*COLUMNS;
+        if(begin<matches[p]) {
+            int target=begin+column;
+            if(target>=matches[p])target=matches[p]-1;
+            chosen[p]=target;
+            tab=p;
+            focus_row=row;
+            return;
+        }
+        row+=direction;
+    }
 }
 static void search_action(int pos) {
     size_t len=strlen(query);
@@ -342,44 +362,42 @@ static void title_label(char *dest,size_t capacity,const char *src) {
     if(n>18)snprintf(dest,capacity,"%.15s...",src);
     else snprintf(dest,capacity,"%s",src);
 }
-static void draw_shelf(int p,int y) {
+static void draw_shelf_row(int p,int row,int y) {
     int i;
-    char stats[100],label[32];
-    float base=(float)y;
-    u32 title_col=(p==tab)?C_TEXT:C_MUTED;
-    if(p==tab) rect(24,base+4,5,20,C_ACCENT);
-    text(39,base,p==1?"PLAYSTATION 3":"PLAYSTATION 2",5,title_col,22);
-    snprintf(stats,sizeof(stats),"%d GAMES",matches[p]);
-    text(686,base+3,stats,4,C_MUTED,18);
-    for(i=0;i<PER_PAGE;i++){
-        int shown=offset[p]+i,slot=p*PER_PAGE+i;
-        float x=31+i*198.f,cover_y=base+28;
-        int active=p==tab && shown==chosen[p];
-        if(shown>=matches[p])break;
-        if(active){
-            rect(x-3,cover_y-3,183,147,C_ACCENT);
-            rect(x,cover_y,177,141,RGBA(38,38,42,255));
-        }else{
-            rect(x,cover_y,177,141,RGBA(34,34,38,255));
+    const int row_index=p==1?row:2+row;
+    for(i=0;i<COLUMNS;i++) {
+        int at=offset[p]+row*COLUMNS+i;
+        int slot=p*PER_PAGE+row*COLUMNS+i;
+        float x=30.f+i*101.f;
+        float top=(float)y;
+        int active=(focus_row==row_index && chosen[p]==at);
+        char label[32];
+        if(at>=matches[p])break;
+        /* No artificial panels around unselected images, like Netflix. */
+        if(active) {
+            rect(x-3,top-3,96,79,RGBA(253,254,255,255));
+            rect(x-1,top-1,92,75,C_ACCENT);
         }
-        rect(x+3,cover_y+3,171,135,RGBA(15,15,18,255));
-        if(cover_offset[slot])image(x+4,cover_y+3,169,133,slot);
-        else{
-            rect(x+50,cover_y+17,77,100,RGBA(43,43,49,255));
-            rect(x+50,cover_y+17,4,100,C_ACCENT);
-            text(x+64,cover_y+53,p==1?"PS3":"PS2",6,C_TEXT,3);
+        rect(x,top,90,72,RGBA(22,23,28,255));
+        if(cover_offset[slot])image(x+1,top+1,88,70,slot);
+        else {
+            rect(x+18,top+4,52,64,RGBA(37,39,46,255));
+            rect(x+18,top+4,3,64,C_ACCENT);
+            text(x+26,top+26,p==1?"PS3":"PS2",5,C_TEXT,3);
         }
-        title_label(label,sizeof(label),games[p][matching[p][shown]].title);
-        text(x+3,cover_y+148,label,4,active?C_TEXT:C_MUTED,19);
+        title_label(label,sizeof(label),games[p][matching[p][at]].title);
+        text(x,top+76,label,3,active?C_TEXT:C_MUTED,16);
     }
-    if(matches[p]==0){
-        rect(31,base+30,785,132,RGBA(27,28,35,255));
-        text(52,base+70,query[0]?"NO MATCHING GAMES":"NO GAMES FOUND",6,C_MUTED,29);
-    }
-    if(matches[p]>PER_PAGE){
-        snprintf(stats,sizeof(stats),"%d / %d",chosen[p]+1,matches[p]);
-        text(720,base+172,stats,3,C_MUTED,15);
-    }
+}
+static void draw_platform(int p,int header) {
+    char counter[40];
+    if(tab==p)rect(24,header+1,3,15,C_ACCENT);
+    text(35,header,p==1?"PLAYSTATION 3":"PLAYSTATION 2",5,C_TEXT,20);
+    snprintf(counter,sizeof(counter),"%d TITLES",matches[p]);
+    text(735,header+3,counter,3,C_MUTED,12);
+    draw_shelf_row(p,0,header+25);
+    draw_shelf_row(p,1,header+116);
+    if(matches[p]==0)text(35,header+64,"NO GAMES FOUND",5,C_MUTED,26);
 }
 static void draw_search(void) {
     int i;
@@ -418,29 +436,32 @@ static void draw_message(void) {
     text(130,292,exit_frames?"IF GAME DOES NOT START, SELECT MOUNTED ICON IN XMB":"PRESS O TO CLOSE",4,C_MUTED,70);
 }
 static void render(void) {
-    char status[110];
-    /* tiny3d_Clear consumes AARRGGBB, unlike tiny3d_VertexColor (RRGGBBAA). */
-    tiny3d_Clear(0xFF040406u,TINY3D_CLEAR_ALL);
+    char selection[72],meta[55];
+    const Entry *active=NULL;
+    tiny3d_Clear(0xFF09090Cu,TINY3D_CLEAR_ALL);
     tiny3d_AlphaTest(1,0x10,TINY3D_ALPHA_FUNC_GEQUAL);
     tiny3d_BlendFunc(1,TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
         TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ZERO,
         TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
     tiny3d_Project2D();
     gradient();
-    rect(0,0,848,70,RGBA(8,9,13,255));
-    rect(0,0,6,70,C_ACCENT);
-    text(31,13,"STATION NOVA",9,C_TEXT,18);
-    text(335,27,"THE GAME COLLECTION",4,C_MUTED,23);
-    if(query[0])snprintf(status,sizeof(status),"SEARCH: %.21s",query);
-    else snprintf(status,sizeof(status),"%d TITLES  /  SELECT TO SEARCH",count[0]+count[1]);
-    text(618,27,"V0.5 - DIRECT TEST",3,RGBA(254,105,115,255),25);
-    draw_shelf(1,72);
-    rect(31,268,785,1,RGBA(65,35,39,255));
-    draw_shelf(0,273);
-    rect(0,474,848,38,RGBA(8,9,13,255));
-    rect(0,474,848,1,C_EDGE);
-    text(24,484,"X DIRECT PLAY   /   SQUARE SEARCH   /   TRIANGLE RESCAN",3,C_TEXT,73);
-    text(683,484,"O EXIT",3,C_MUTED,12);
+    rect(0,0,848,49,RGBA(7,7,11,255));
+    rect(23,13,4,23,C_ACCENT);
+    text(37,10,"STATION",9,C_TEXT,11);
+    text(258,20,"NOVA",5,C_ACCENT,5);
+    if(matches[tab] && chosen[tab]<matches[tab])
+        active=&games[tab][matching[tab][chosen[tab]]];
+    if(active)snprintf(selection,sizeof(selection),"%.38s",active->title);
+    else snprintf(selection,sizeof(selection),"YOUR GAME LIBRARY");
+    text(341,16,selection,4,C_TEXT,39);
+    snprintf(meta,sizeof(meta),"%d TITLES",count[0]+count[1]);
+    text(753,18,meta,3,C_MUTED,16);
+    draw_platform(1,53);
+    rect(25,279,799,1,RGBA(42,42,48,255));
+    draw_platform(0,282);
+    rect(0,497,848,15,RGBA(9,9,13,255));
+    text(25,498,"X PLAY       SQUARE SEARCH       UP DOWN ROW       TRIANGLE RESCAN",2,C_MUTED,91);
+    text(766,498,"O EXIT",2,C_MUTED,10);
     if(search_mode)draw_search();
     if(show_details)draw_message();
     tiny3d_Flip();
@@ -688,8 +709,8 @@ int main(void) {
             if(pressed&PAD_CIRCLE) {show_details=show_error=0;}
         }else{
             if(pressed&PAD_CIRCLE)keep_running=0;
-            if(pressed&PAD_UP)tab=1;
-            if(pressed&PAD_DOWN)tab=0;
+            if(pressed&PAD_UP)navigate_vertical(-1);
+            if(pressed&PAD_DOWN)navigate_vertical(1);
             if(pressed&PAD_LEFT)move_selection(tab,-1);
             if(pressed&PAD_RIGHT)move_selection(tab,1);
             if(pressed&PAD_SQUARE || pressed&PAD_SELECT){search_mode=1;keypos=0;}
