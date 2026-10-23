@@ -432,7 +432,7 @@ static void render(void) {
     text(335,27,"THE GAME COLLECTION",4,C_MUTED,23);
     if(query[0])snprintf(status,sizeof(status),"SEARCH: %.21s",query);
     else snprintf(status,sizeof(status),"%d TITLES  /  SELECT TO SEARCH",count[0]+count[1]);
-    text(618,27,"V0.4 - NOVA",3,RGBA(254,105,115,255),25);
+    text(618,27,"V0.4.1 / GPU FIX",3,RGBA(254,105,115,255),25);
     draw_shelf(1,72);
     rect(31,268,785,1,RGBA(65,35,39,255));
     draw_shelf(0,273);
