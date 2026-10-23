@@ -1,7 +1,6 @@
 /*
- * STATION for PS3 — safe native proof of concept.
- * Detects game files in known internal HDD locations and previews local covers.
- * Deliberately has NO mount/write/delete/rename/launch operations.
+ * STATION 0.3 — cover-first PS3 + PS2 Classics game library.
+ * Non-destructive scanner. Explicit webMAN handoff for mounting games.
  * GPL-3.0-or-later app code; Tiny3D and PSL1GHT retain upstream licences.
  */
 #include <stdio.h>
@@ -23,7 +22,7 @@
 #include "ui_font_generated.h"
 
 #define MAX_GAMES 600
-#define PER_PAGE 8
+#define PER_PAGE 5
 #define GRID_COLS 4
 #define FONT_W 512
 #define FONT_H 256
@@ -36,6 +35,7 @@
 #define PAD_UP      0x1000
 #define PAD_CROSS   0x0040
 #define PAD_SQUARE  0x0080
+#define PAD_SELECT  0x0100
 #define PAD_CIRCLE  0x0020
 #define PAD_TRIANGLE 0x0010
 #define PAD_R1      0x0008
@@ -48,22 +48,27 @@ typedef struct {
 } Entry;
 
 static Entry games[2][MAX_GAMES];
-static int count[2]={0,0}, tab=0, chosen[2]={0,0}, offset[2]={0,0};
+static int count[2]={0,0}, tab=1, chosen[2]={0,0}, offset[2]={0,0};
+static int matching[2][MAX_GAMES],matches[2]={0,0};
+static char query[24]="";
+static int search_mode=0,keypos=0,exit_frames=0;
+static const char keyboard[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 static int show_details=0, keep_running=1, loaded_tab=-1, loaded_offset=-1;
+static int loaded_off[2]={-1,-1};
 static u32 *texture_mem=0;
-static u32 cover_offset[PER_PAGE];
-static pngData cover_data[PER_PAGE];
+static u32 cover_offset[2*PER_PAGE];
+static pngData cover_data[2*PER_PAGE];
 static u32 font_offset=0;
 static char message[128]="SELECT A GAME TO PLAY";
 static int show_error=0;
 static int network_ready=0;
 
-static const u32 C_BG=RGBA(10,15,27,255);
-static const u32 C_CARD=RGBA(23,33,55,255);
-static const u32 C_EDGE=RGBA(40,55,80,255);
-static const u32 C_BLUE=RGBA(35,119,213,255);
+static const u32 C_BG=RGBA(9,10,14,255);
+static const u32 C_CARD=RGBA(24,25,30,255);
+static const u32 C_EDGE=RGBA(59,61,70,255);
+static const u32 C_BLUE=RGBA(233,22,47,255);
 static const u32 C_TEXT=RGBA(246,247,250,255);
-static const u32 C_MUTED=RGBA(140,161,190,255);
+static const u32 C_MUTED=RGBA(191,194,201,255);
 
 
 /* Smooth anti-aliased font baked in CI from Pillow's freely distributable
@@ -127,10 +132,10 @@ static void text(float x,float y,const char *s,int size,u32 color,int maximum) {
     }
 }
 static void gradient(void) {
-    int i;
-    for(i=0;i<64;i++) {
-        int r=8+(i*7/64),g=13+(i*10/64),b=27+(i*20/64);
-        rect(0,i*8,848,9,RGBA(r,g,b,255));
+    int y;
+    for(y=0;y<512;y+=8) {
+        int v=10+y/62;
+        rect(0,y,848,9,RGBA(v,v,v+3,255));
     }
 }
 static void frame(float x,float y,float w,float h,int active) {
@@ -217,6 +222,27 @@ static int cmp_games(const void *aa,const void *bb) {
     const Entry *a=(const Entry *)aa,*b=(const Entry *)bb;
     return strcasecmp(a->title,b->title);
 }
+
+static int contains_ci(const char *hay,const char *needle) {
+    size_t n=strlen(needle),i,j;
+    if(!n)return 1;
+    for(i=0;hay[i];i++){
+        for(j=0;j<n && hay[i+j];j++)
+            if(toupper((unsigned char)hay[i+j])!=toupper((unsigned char)needle[j]))break;
+        if(j==n)return 1;
+    }
+    return 0;
+}
+static void update_filter(void) {
+    int p,i;
+    for(p=0;p<2;p++){
+        matches[p]=0;
+        for(i=0;i<count[p];i++)if(contains_ci(games[p][i].title,query))
+            matching[p][matches[p]++]=i;
+        chosen[p]=0;offset[p]=0;
+    }
+    loaded_off[0]=loaded_off[1]=-1;
+}
 static void refresh(void) {
     count[0]=count[1]=0;
     scan_directory(0,"/dev_hdd0/PS2ISO",0);
@@ -224,43 +250,66 @@ static void refresh(void) {
     scan_directory(1,"/dev_hdd0/GAMES",1);
     qsort(games[0],count[0],sizeof(Entry),cmp_games);
     qsort(games[1],count[1],sizeof(Entry),cmp_games);
-    chosen[0]=chosen[1]=offset[0]=offset[1]=0;
-    loaded_tab=-1;loaded_offset=-1;show_details=0;
+    update_filter();show_details=0;
 }
 static void unload_covers(void) {
     int i;
-    for(i=0;i<PER_PAGE;i++) {
+    for(i=0;i<2*PER_PAGE;i++){
         cover_offset[i]=0;
         memset(&cover_data[i],0,sizeof(pngData));
     }
 }
 static void covers_for_page(void) {
-    int i;
+    int p,i;
     unsigned used=0;
     u32 *write=texture_mem;
     unload_covers();
-    loaded_tab=tab;loaded_offset=offset[tab];
+    loaded_off[0]=offset[0];loaded_off[1]=offset[1];
     if(!texture_mem)return;
-    for(i=0;i<PER_PAGE;i++) {
-        int idx=offset[tab]+i;
+    for(p=0;p<2;p++)for(i=0;i<PER_PAGE;i++){
+        int idx=offset[p]+i,slot=p*PER_PAGE+i;
         unsigned n;
         pngData tmp;
-        if(idx>=count[tab])break;
+        if(idx>=matches[p])break;
         memset(&tmp,0,sizeof(tmp));
-        pngLoadFromFile(games[tab][idx].cover,&tmp);
+        pngLoadFromFile(games[p][matching[p][idx]].cover,&tmp);
         if(!tmp.bmp_out)continue;
         n=(unsigned)(tmp.pitch*tmp.height);
-        if(n<16 || n+15u>TEX_BUDGET-used || tmp.width>1024 || tmp.height>1024) {
+        if(n<16||n+15u>TEX_BUDGET-used||tmp.width>1024||tmp.height>1024){
             free(tmp.bmp_out);continue;
         }
         RSX_MEMCPY(write,tmp.bmp_out,n);
         n=(n+15u)&~15u;
         free(tmp.bmp_out);
         tmp.bmp_out=0;
-        cover_offset[i]=tiny3d_TextureOffset(write);
-        cover_data[i]=tmp;
+        cover_offset[slot]=tiny3d_TextureOffset(write);
+        cover_data[slot]=tmp;
         write+=n/4;
         used+=n;
+    }
+}
+static void move_selection(int p,int change) {
+    int next;
+    if(!matches[p])return;
+    next=chosen[p]+change;
+    if(next<0)next=0;
+    if(next>=matches[p])next=matches[p]-1;
+    chosen[p]=next;
+    if(chosen[p]<offset[p])offset[p]=chosen[p];
+    if(chosen[p]>=offset[p]+PER_PAGE)offset[p]=chosen[p]-(PER_PAGE-1);
+}
+static void search_action(int pos) {
+    size_t len=strlen(query);
+    if(pos<36){
+        if(len<sizeof(query)-2){query[len]=keyboard[pos];query[len+1]=0;update_filter();}
+    }else if(pos==36){
+        if(len<sizeof(query)-2){query[len]=' ';query[len+1]=0;update_filter();}
+    }else if(pos==37){
+        if(len){query[len-1]=0;update_filter();}
+    }else if(pos==38){
+        search_mode=0;
+    }else if(pos==40){
+        query[0]=0;update_filter();
     }
 }
 static void image(float x,float y,float w,float h,int slot) {
@@ -287,12 +336,89 @@ static void image(float x,float y,float w,float h,int slot) {
     tiny3d_End();
 }
 
-static void render(void) {
+
+static void title_label(char *dest,size_t capacity,const char *src) {
+    size_t n=strlen(src);
+    if(n>18)snprintf(dest,capacity,"%.15s...",src);
+    else snprintf(dest,capacity,"%s",src);
+}
+static void draw_shelf(int p,int y) {
     int i;
-    char stats[90];
-    const int ix=chosen[tab];
-    /* Required every frame: restore Tiny3D render-state setup from working v0.1.
-     * Without 2D projection the gallery vertices do not display correctly. */
+    char stats[100],label[32];
+    float base=(float)y;
+    u32 title_col=(p==tab)?C_TEXT:C_MUTED;
+    if(p==tab) rect(24,base+4,5,20,C_BLUE);
+    text(39,base,p==1?"PLAYSTATION 3":"PLAYSTATION 2",5,title_col,22);
+    snprintf(stats,sizeof(stats),"%d GAMES",matches[p]);
+    text(686,base+3,stats,4,C_MUTED,18);
+    for(i=0;i<PER_PAGE;i++){
+        int shown=offset[p]+i,slot=p*PER_PAGE+i;
+        float x=31+i*160.f,cover_y=base+28;
+        int active=p==tab && shown==chosen[p];
+        if(shown>=matches[p])break;
+        if(active){
+            rect(x-3,cover_y-3,147,138,C_BLUE);
+            rect(x,cover_y,141,132,RGBA(38,39,45,255));
+        }else{
+            rect(x,cover_y,141,132,RGBA(36,37,42,255));
+        }
+        rect(x+3,cover_y+3,135,126,RGBA(15,16,21,255));
+        if(cover_offset[slot])image(x+4,cover_y+3,133,125,slot);
+        else{
+            rect(x+34,cover_y+17,73,92,RGBA(43,45,53,255));
+            rect(x+34,cover_y+17,4,92,C_BLUE);
+            text(x+46,cover_y+49,p==1?"PS3":"PS2",6,C_TEXT,3);
+        }
+        title_label(label,sizeof(label),games[p][matching[p][shown]].title);
+        text(x+3,cover_y+139,label,3,active?C_TEXT:C_MUTED,19);
+    }
+    if(matches[p]==0){
+        rect(31,base+30,785,132,RGBA(27,28,35,255));
+        text(52,base+70,query[0]?"NO MATCHING GAMES":"NO GAMES FOUND",6,C_MUTED,29);
+    }
+    if(matches[p]>PER_PAGE){
+        snprintf(stats,sizeof(stats),"%d / %d",chosen[p]+1,matches[p]);
+        text(720,base+172,stats,3,C_MUTED,15);
+    }
+}
+static void draw_search(void) {
+    int i;
+    char hint[64];
+    rect(51,49,746,417,RGBA(6,7,11,255));
+    rect(51,49,746,4,C_BLUE);
+    rect(51,462,746,4,C_BLUE);
+    text(85,67,"SEARCH YOUR LIBRARY",7,C_TEXT,28);
+    text(86,104,"FIND A GAME BY NAME",4,C_MUTED,32);
+    rect(84,139,679,48,RGBA(31,32,40,255));
+    text(100,146,query[0]?query:"TYPE USING YOUR CONTROLLER",6,query[0]?C_TEXT:C_MUTED,24);
+    for(i=0;i<36;i++){
+        float x=95+(i%9)*74.f,y=203+(i/9)*46.f;
+        char v[2]={keyboard[i],0};
+        if(keypos==i)rect(x-2,y-2,61,41,C_BLUE);
+        rect(x,y,57,37,keypos==i?RGBA(84,18,33,255):RGBA(37,38,47,255));
+        text(x+20,y+7,v,6,C_TEXT,2);
+    }
+    {
+      const char *actions[5]={"SPACE","DELETE","DONE","ONLINE","CLEAR"};
+      for(i=0;i<5;i++){
+          float x=95+i*133.f,y=394.f;
+          if(keypos==36+i)rect(x-2,y-2,127,44,C_BLUE);
+          rect(x,y,123,40,keypos==36+i?RGBA(84,18,33,255):RGBA(37,38,47,255));
+          text(x+9,y+11,actions[i],4,C_TEXT,9);
+      }
+    }
+    snprintf(hint,sizeof(hint),"%d PS3 / %d PS2 RESULTS",matches[1],matches[0]);
+    text(95,448,hint,3,C_MUTED,34);
+}
+static void draw_message(void) {
+    rect(102,160,643,179,RGBA(8,9,15,255));
+    rect(102,160,643,4,show_error?RGBA(248,170,59,255):C_BLUE);
+    text(129,185,show_error?"CANNOT MOUNT GAME":"GAME READY",7,C_TEXT,26);
+    text(130,233,message,5,C_TEXT,58);
+    text(130,292,exit_frames?"RETURNING TO XMB - OPEN DISC OR CLASSICS ICON":"PRESS O TO CLOSE",4,C_MUTED,62);
+}
+static void render(void) {
+    char status[110];
     tiny3d_Clear(C_BG,TINY3D_CLEAR_ALL);
     tiny3d_AlphaTest(1,0x10,TINY3D_ALPHA_FUNC_GEQUAL);
     tiny3d_BlendFunc(1,TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
@@ -300,70 +426,24 @@ static void render(void) {
         TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
     tiny3d_Project2D();
     gradient();
-    rect(0,0,848,79,RGBA(10,17,29,255));
-    rect(29,20,5,39,C_BLUE);
-    text(45,16,"STATION",10,C_TEXT,14);
-    text(47,51,"YOUR GAMES. YOUR CONSOLE.",3,C_MUTED,26);
-    rect(647,27,160,26,RGBA(27,45,70,255));
-    text(662,32,"BETA 0.2  /  PS3",3,RGBA(123,184,255,255),22);
-
-    /* Navigation rail */
-    text(28,102,"LIBRARY",4,C_MUTED,12);
-    rect(19,143,154,60,tab==0?RGBA(36,93,157,255):C_CARD);
-    rect(19,211,154,60,tab==1?RGBA(36,93,157,255):C_CARD);
-    rect(21,145,3,56,tab==0?RGBA(81,177,255,255):C_EDGE);
-    rect(21,213,3,56,tab==1?RGBA(81,177,255,255):C_EDGE);
-    text(38,151,"PS2",7,C_TEXT,4);
-    text(38,179,"CLASSICS",3,C_MUTED,10);
-    text(38,219,"PS3",7,C_TEXT,4);
-    text(38,247,"GAMES",3,C_MUTED,10);
-    rect(175,90,1,352,C_EDGE);
-    text(27,355,"POWERED BY",3,C_MUTED,16);
-    text(27,372,"WEBMAN MOD",4,RGBA(125,191,255,255),16);
-    text(27,409,"L1 / R1",3,C_MUTED,14);
-    text(27,425,"SWITCH SYSTEM",3,C_MUTED,18);
-
-    /* Collection header */
-    text(198,89,tab==0?"PLAYSTATION 2":"PLAYSTATION 3",6,C_TEXT,20);
-    snprintf(stats,sizeof(stats),"%d GAMES   /   PAGE %d OF %d",
-             count[tab],offset[tab]/PER_PAGE+1,(count[tab]+PER_PAGE-1)/PER_PAGE>0?(count[tab]+PER_PAGE-1)/PER_PAGE:1);
-    text(199,121,stats,3,C_MUTED,52);
-    for(i=0;i<PER_PAGE;i++) {
-        const int idx=offset[tab]+i;
-        int col=i%GRID_COLS,row=i/GRID_COLS;
-        float x=196+col*158.f,y=150+row*155.f;
-        int selected=idx==chosen[tab];
-        if(idx>=count[tab])break;
-        if(selected) rect(x-3,y-3,151,150,RGBA(39,120,221,255));
-        frame(x,y,145,144,selected);
-        rect(x+10,y+9,125,106,RGBA(11,21,35,255));
-        if(cover_offset[i])image(x+10,y+9,125,106,i);
-        else {
-            text(x+46,y+38,tab==0?"PS2":"PS3",6,RGBA(88,133,184,255),4);
-            text(x+38,y+71,"NO ART",3,C_MUTED,12);
-        }
-        text(x+10,y+122,games[tab][idx].title,3,C_TEXT,18);
-    }
-    if(count[tab]==0) {
-        rect(205,176,593,184,C_CARD);
-        text(242,218,"NO GAMES FOUND",8,C_TEXT,30);
-        text(244,277,"PRESS TRIANGLE TO SCAN AGAIN",4,C_MUTED,35);
-    }
-    /* Context overlay: never obscure selection before confirmation */
-    if(show_details && count[tab]) {
-        rect(193,335,635,125,RGBA(16,38,66,255));
-        rect(193,335,635,3,C_BLUE);
-        text(208,349,show_error?"LAUNCH ERROR":"SELECTED GAME",4,show_error?RGBA(255,139,139,255):C_MUTED,26);
-        text(208,372,show_error?message:games[tab][ix].title,5,C_TEXT,46);
-        text(208,413,show_error?"O TO CLOSE   /   CHECK WEBMAN":"X TO PLAY   /   O TO CLOSE",3,C_MUTED,50);
-    }
-    rect(0,474,848,38,RGBA(8,16,29,255));
-    rect(0,473,848,1,C_EDGE);
-    text(25,483,"X  PLAY   /   SQUARE  INFO   /   TRIANGLE  RESCAN",3,C_MUTED,63);
-    text(656,483,"O  EXIT  /  L1 R1",3,C_MUTED,26);
+    rect(0,0,848,70,RGBA(8,9,13,255));
+    rect(0,0,6,70,C_BLUE);
+    text(31,13,"STATION",11,C_TEXT,10);
+    text(262,26,"THE GAME COLLECTION",4,C_MUTED,28);
+    if(query[0])snprintf(status,sizeof(status),"SEARCH: %.21s",query);
+    else snprintf(status,sizeof(status),"%d TITLES  /  SELECT TO SEARCH",count[0]+count[1]);
+    text(564,27,status,3,C_MUTED,31);
+    draw_shelf(1,81);
+    rect(31,270,785,1,RGBA(51,53,62,255));
+    draw_shelf(0,276);
+    rect(0,474,848,38,RGBA(8,9,13,255));
+    rect(0,474,848,1,C_EDGE);
+    text(24,484,"X MOUNT   /   SQUARE SEARCH   /   TRIANGLE RESCAN",3,C_TEXT,70);
+    text(683,484,"O EXIT",3,C_MUTED,12);
+    if(search_mode)draw_search();
+    if(show_details)draw_message();
     tiny3d_Flip();
 }
-
 /* webMAN runs on the console's localhost interface. We never touch the
  * PS2 Classics encrypted files or rewrite system game folders ourselves.
  * Responses are checked before reporting a successful hand-off. */
@@ -416,42 +496,81 @@ static int encode_game_path(const char *path,char *encoded,size_t capacity) {
     encoded[o]=0;
     return 1;
 }
+
 static void launch_selected(void) {
     char encoded[1500],command[1600];
     Entry *game;
-    if(!count[tab])return;
-    game=&games[tab][chosen[tab]];
+    if(matches[tab]<=0)return;
+    game=&games[tab][matching[tab][chosen[tab]]];
     if(!encode_game_path(game->path,encoded,sizeof(encoded))) {
-        snprintf(message,sizeof(message),"INVALID GAME PATH");
-        show_error=show_details=1;
-        return;
+        snprintf(message,sizeof(message),"INVALID GAME PATH");show_error=show_details=1;return;
     }
-    if(tab==0 && !folder_exists("/dev_hdd0/game/PS2U10000/USRDIR")) {
-        snprintf(message,sizeof(message),"INSTALL PS2 CLASSICS LAUNCHER FIRST");
-        show_error=show_details=1;
-        return;
+    if(tab==0 && !folder_exists("/dev_hdd0/game/PS2U10000")) {
+        snprintf(message,sizeof(message),"PS2 CLASSICS LAUNCHER NOT FOUND");
+        show_error=show_details=1;return;
     }
-    snprintf(command,sizeof(command),"/%s%s",tab==0?"mount.ps3":"play.ps3",encoded);
+    /* webMAN's /mount_ps3 bypasses its normal in-game mount restriction.
+     * XMB auto-start from a running homebrew app is not reliable.
+     * We mount first, confirm an HTTP response, then exit cleanly.
+     * User completes launch from the corresponding XMB icon. */
+    snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
+    snprintf(message,sizeof(message),"CONTACTING WEBMAN...");
+    show_details=1;show_error=0;render();
     if(!webman_http(command)) {
-        snprintf(message,sizeof(message),"WEBMAN NOT RESPONDING - ENABLE HEN");
-        show_error=show_details=1;
-        return;
+        snprintf(message,sizeof(message),"WEBMAN NOT READY. CHECK HEN AND GAME PATH.");
+        show_error=show_details=1;return;
     }
-    if(tab==0) {
-        /* Mount encrypted BIN.ENC via webMAN, then request its installed
-         * PS2 Classics Launcher by the established PS2U10000 title ID. */
-        usleep(900000);
-        if(!webman_http("/play.ps3?PS2U10000")) {
-            snprintf(message,sizeof(message),"PS2 MOUNTED; START CLASSICS IN XMB");
-            show_error=show_details=1;
-            return;
-        }
+    snprintf(message,sizeof(message),tab==1?"PS3 GAME MOUNTED":"PS2 CLASSIC MOUNTED");
+    show_error=0;show_details=1;exit_frames=90;
+}
+static void online_lookup(void) {
+    char path[640];
+    size_t j,len;
+    const char *base="/browser.ps3?https://www.mobygames.com/search/?q=";
+    snprintf(path,sizeof(path),"%s",base);
+    len=strlen(path);
+    for(j=0;query[j] && len+4<sizeof(path);j++){
+        unsigned char c=(unsigned char)query[j];
+        if(isalnum(c))path[len++]=c;
+        else if(c==' ')path[len++]='+';
     }
-    keep_running=0; /* hand control to webMAN/XMB */
+    path[len]=0;
+    search_mode=0;
+    snprintf(message,sizeof(message),"OPENING ONLINE GAME INFORMATION...");
+    show_details=1;show_error=0;render();
+    if(webman_http(path)){exit_frames=90;return;}
+    snprintf(message,sizeof(message),"ONLINE SEARCH NEEDS WEBMAN AND PS3 BROWSER");
+    show_error=1;show_details=1;
 }
 static void callback(u64 status,u64 param,void *userdata) {
     (void)param;(void)userdata;
     if(status==SYSUTIL_EXIT_GAME)keep_running=0;
+}
+
+static void search_keys(unsigned pressed) {
+    int row=keypos/9;
+    if(keypos>=36)row=4;
+    if(pressed&PAD_LEFT){
+        if(keypos>=36 && keypos>36)keypos--;
+        else if(keypos%9>0)keypos--;
+    }
+    if(pressed&PAD_RIGHT){
+        if(keypos>=36 && keypos<40)keypos++;
+        else if(keypos%9<8)keypos++;
+    }
+    if(pressed&PAD_UP){
+        if(keypos>=36)keypos=27+(keypos-36)*2;
+        else if(row>0)keypos-=9;
+    }
+    if(pressed&PAD_DOWN){
+        if(keypos<27)keypos+=9;
+        else if(keypos<36)keypos=36+(keypos%9)/2;
+    }
+    if(pressed&PAD_CROSS){
+        if(keypos==39)online_lookup();
+        else search_action(keypos);
+    }
+    if(pressed&PAD_CIRCLE || pressed&PAD_SQUARE)search_mode=0;
 }
 int main(void) {
     padInfo info;
@@ -463,31 +582,36 @@ int main(void) {
     texture_mem=tiny3d_AllocTexture(TEX_BUDGET);
     font_setup();
     ioPadInit(7);
-    /* Initialise network lazily when X is pressed, never while starting UI. */
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0,callback,NULL);
     refresh();
     while(keep_running) {
         unsigned buttons=0,pressed;
         sysUtilCheckCallback();
         ioPadGetInfo(&info);
-        if(info.status[0]) {
+        if(info.status[0]){
             ioPadGetData(0,&pd);
             buttons=((unsigned)pd.button[2]<<8)|pd.button[3];
         }
         pressed=buttons & ~previous;
         previous=buttons;
-        if(pressed & PAD_CIRCLE) {if(show_details){show_details=0;show_error=0;}else keep_running=0;}
-        if(pressed & PAD_L1) {tab=0;show_details=0;}
-        if(pressed & PAD_R1) {tab=1;show_details=0;}
-        if(pressed & PAD_TRIANGLE) refresh();
-        if(pressed & PAD_LEFT && chosen[tab]>0) {chosen[tab]--;show_details=0;}
-        if(pressed & PAD_RIGHT && chosen[tab]<count[tab]-1) {chosen[tab]++;show_details=0;}
-        if(pressed & PAD_UP && chosen[tab]>=GRID_COLS) {chosen[tab]-=GRID_COLS;show_details=0;}
-        if(pressed & PAD_DOWN && chosen[tab]+GRID_COLS<count[tab]) {chosen[tab]+=GRID_COLS;show_details=0;}
-        if(pressed & PAD_SQUARE && count[tab]) {show_error=0;show_details=!show_details;}
-        if(pressed & PAD_CROSS && count[tab]) launch_selected();
-        offset[tab]=(chosen[tab]/PER_PAGE)*PER_PAGE;
-        if(loaded_tab!=tab || loaded_offset!=offset[tab])covers_for_page();
+        if(exit_frames>0){
+            --exit_frames;
+            if(exit_frames==0)keep_running=0;
+        }else if(search_mode){
+            search_keys(pressed);
+        }else if(show_details){
+            if(pressed&PAD_CIRCLE) {show_details=show_error=0;}
+        }else{
+            if(pressed&PAD_CIRCLE)keep_running=0;
+            if(pressed&PAD_UP)tab=1;
+            if(pressed&PAD_DOWN)tab=0;
+            if(pressed&PAD_LEFT)move_selection(tab,-1);
+            if(pressed&PAD_RIGHT)move_selection(tab,1);
+            if(pressed&PAD_SQUARE || pressed&PAD_SELECT){search_mode=1;keypos=0;}
+            if(pressed&PAD_TRIANGLE)refresh();
+            if(pressed&PAD_CROSS)launch_selected();
+        }
+        if(loaded_off[0]!=offset[0] || loaded_off[1]!=offset[1])covers_for_page();
         render();
         usleep(16000);
     }
