@@ -36,16 +36,18 @@ jobs:
       - name: Compile and build installable PKG
         shell: bash
         run: |
+          set -e
           make pkg
-          ls -lh station*.pkg station*.self
+          echo "Generated build files:"
+          find . -maxdepth 2 -type f \( -iname '*.pkg' -o -iname '*.self' -o -name 'EBOOT.BIN' \) -print
+          echo "Require an actual non-empty installable package:"
+          find . -maxdepth 2 -type f -iname '*.pkg' -size +0c -print -quit | grep -q .
       - name: Archive build output
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: station-ps3-build
-          if-no-files-found: warn
+          if-no-files-found: error
           path: |
-            station.pkg
-            station.gnpdrm.pkg
-            station.self
+            *.pkg
+            *.self
             EBOOT.BIN
