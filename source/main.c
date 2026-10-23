@@ -16,9 +16,17 @@
 #include <io/pad.h>
 #include <pngdec/pngdec.h>
 #include <tiny3d.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <net/socket.h>
+#include <net/net.h>
+#include "ui_font_generated.h"
 
 #define MAX_GAMES 600
-#define PER_PAGE 10
+#define PER_PAGE 8
+#define GRID_COLS 4
+#define FONT_W 512
+#define FONT_H 256
 #define TEX_BUDGET (20u * 1024u * 1024u)
 #define RGBA(r,g,b,a) ((((u32)(r))<<24)|(((u32)(g))<<16)|(((u32)(b))<<8)|(u32)(a))
 
@@ -44,6 +52,9 @@ static int show_details=0, keep_running=1, loaded_tab=-1, loaded_offset=-1;
 static u32 *texture_mem=0;
 static u32 cover_offset[PER_PAGE];
 static pngData cover_data[PER_PAGE];
+static u32 font_offset=0;
+static char message[128]="SELECT A GAME TO PLAY";
+static int show_error=0;
 
 static const u32 C_BG=RGBA(10,15,27,255);
 static const u32 C_CARD=RGBA(23,33,55,255);
@@ -52,52 +63,77 @@ static const u32 C_BLUE=RGBA(35,119,213,255);
 static const u32 C_TEXT=RGBA(246,247,250,255);
 static const u32 C_MUTED=RGBA(140,161,190,255);
 
-/* Compact readable glyphs, avoiding external font/asset dependencies. */
-typedef struct { char ch; unsigned char row[5]; } Glyph;
-static const Glyph glyphs[]={
- {'A',{2,5,7,5,5}}, {'B',{6,5,6,5,6}}, {'C',{3,4,4,4,3}},
- {'D',{6,5,5,5,6}}, {'E',{7,4,6,4,7}}, {'F',{7,4,6,4,4}},
- {'G',{3,4,5,5,3}}, {'H',{5,5,7,5,5}}, {'I',{7,2,2,2,7}},
- {'J',{1,1,1,5,2}}, {'K',{5,5,6,5,5}}, {'L',{4,4,4,4,7}},
- {'M',{5,7,7,5,5}}, {'N',{5,7,7,7,5}}, {'O',{2,5,5,5,2}},
- {'P',{6,5,6,4,4}}, {'Q',{2,5,5,7,3}}, {'R',{6,5,6,5,5}},
- {'S',{3,4,2,1,6}}, {'T',{7,2,2,2,2}}, {'U',{5,5,5,5,7}},
- {'V',{5,5,5,5,2}}, {'W',{5,5,7,7,5}}, {'X',{5,5,2,5,5}},
- {'Y',{5,5,2,2,2}}, {'Z',{7,1,2,4,7}},
- {'0',{7,5,5,5,7}}, {'1',{2,6,2,2,7}}, {'2',{6,1,7,4,7}},
- {'3',{6,1,3,1,6}}, {'4',{5,5,7,1,1}}, {'5',{7,4,6,1,6}},
- {'6',{3,4,7,5,7}}, {'7',{7,1,2,2,2}}, {'8',{7,5,7,5,7}},
- {'9',{7,5,7,1,6}},
- {' ',{0,0,0,0,0}}, {'.',{0,0,0,0,2}}, {'-',{0,0,7,0,0}},
- {'/',{1,1,2,4,4}}, {':',{0,2,0,2,0}}, {'?',{6,1,2,0,2}},
- {'&',{2,5,2,5,3}}, {'(',{2,4,4,4,2}}, {')',{2,1,1,1,2}},
- {'_',{0,0,0,0,7}}, {'+', {0,2,7,2,0}}, {'\'',{2,2,0,0,0}}
-};
 
+/* Smooth anti-aliased font baked in CI from Pillow's freely distributable
+ * bundled default font, rendered as a single hardware texture atlas. */
 static void rect(float x,float y,float w,float h,u32 color) {
     tiny3d_SetPolygon(TINY3D_QUADS);
-    tiny3d_VertexPos(x,y,65535.f); tiny3d_VertexColor(color);
+    tiny3d_VertexPos(x,y,65535.f);tiny3d_VertexColor(color);
     tiny3d_VertexPos(x+w,y,65535.f);
     tiny3d_VertexPos(x+w,y+h,65535.f);
     tiny3d_VertexPos(x,y+h,65535.f);
     tiny3d_End();
 }
-static void text(float x,float y,const char *s,int size,u32 color,int maximum) {
-    int chars=0;
-    while(*s && chars++<maximum) {
-        unsigned char ch=(unsigned char)toupper((unsigned char)*s++);
-        int i,j,k;
-        const Glyph *g=0;
-        for(i=0;i<(int)(sizeof(glyphs)/sizeof(glyphs[0]));i++)
-            if(glyphs[i].ch==ch) {g=&glyphs[i];break;}
-        if(!g) ch='?';
-        if(!g) for(i=0;i<(int)(sizeof(glyphs)/sizeof(glyphs[0]));i++)
-            if(glyphs[i].ch==ch) {g=&glyphs[i];break;}
-        if(g) for(j=0;j<5;j++) for(k=0;k<3;k++)
-            if(g->row[j] & (1 << (2-k)))
-                rect(x+(k*size),y+(j*size),(float)size-0.3f,(float)size-0.3f,color);
-        x+=size*4;
+static void font_setup(void) {
+    u32 *out;
+    u32 *pixels;
+    int i,x,y;
+    out=tiny3d_AllocTexture(FONT_W*FONT_H*4);
+    if(!out)return;
+    pixels=(u32 *)calloc(FONT_W*FONT_H,4);
+    if(!pixels)return;
+    for(i=0;i<96;i++)for(y=0;y<32;y++)for(x=0;x<24;x++) {
+        unsigned char a=station_font_alpha[i*24*32+y*24+x];
+        int tx=(i%16)*24+x,ty=(i/16)*32+y;
+        pixels[ty*FONT_W+tx]=RGBA(255,255,255,a);
     }
+    RSX_MEMCPY(out,pixels,FONT_W*FONT_H*4);
+    font_offset=tiny3d_TextureOffset(out);
+    free(pixels);
+}
+static float line_width(const char *s,float sz,int maximum) {
+    float w=0;
+    int n=0;
+    while(*s && n++<maximum) {
+        unsigned char c=(unsigned char)*s++;
+        if(c<32 || c>127)c='?';
+        w+=sz*station_font_width[c-32]/32.f;
+    }
+    return w;
+}
+static void text(float x,float y,const char *s,int size,u32 color,int maximum) {
+    float h=size*4.f;
+    int n=0;
+    if(!font_offset)return;
+    tiny3d_SetTexture(0,font_offset,FONT_W,FONT_H,FONT_W*4,
+                      TINY3D_TEX_FORMAT_A8R8G8B8,TEXTURE_LINEAR);
+    while(*s && n++<maximum) {
+        unsigned char c=(unsigned char)*s++;
+        int glyph;
+        float u,v,w=h*24.f/32.f;
+        if(c<32 || c>127)c='?';
+        glyph=c-32;
+        u=(glyph%16)*24.f/FONT_W;
+        v=(glyph/16)*32.f/FONT_H;
+        tiny3d_SetPolygon(TINY3D_QUADS);
+        tiny3d_VertexPos(x,y,65531.f);tiny3d_VertexColor(color);tiny3d_VertexTexture(u,v);
+        tiny3d_VertexPos(x+w,y,65531.f);tiny3d_VertexTexture(u+24.f/FONT_W,v);
+        tiny3d_VertexPos(x+w,y+h,65531.f);tiny3d_VertexTexture(u+24.f/FONT_W,v+32.f/FONT_H);
+        tiny3d_VertexPos(x,y+h,65531.f);tiny3d_VertexTexture(u,v+32.f/FONT_H);
+        tiny3d_End();
+        x+=h*station_font_width[glyph]/32.f;
+    }
+}
+static void gradient(void) {
+    int i;
+    for(i=0;i<64;i++) {
+        int r=8+(i*7/64),g=13+(i*10/64),b=27+(i*20/64);
+        rect(0,i*8,848,9,RGBA(r,g,b,255));
+    }
+}
+static void frame(float x,float y,float w,float h,int active) {
+    rect(x,y,w,h,active?RGBA(69,151,255,255):RGBA(44,59,79,255));
+    rect(x+2,y+2,w-4,h-4,RGBA(20,31,52,255));
 }
 static int suffix(const char *s,const char *extension) {
     size_t n=strlen(s),e=strlen(extension);
