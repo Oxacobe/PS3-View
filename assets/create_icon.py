@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a crisp, high-contrast 320x176 PS3 XMB icon for STATION.
+"""Build a crisp, high-contrast 320x176 PS3 XMB icon for STATION NOVA.
 Uses the open-source DejaVu fonts installed only inside GitHub Actions.
 """
 from pathlib import Path
@@ -28,7 +28,7 @@ small=ImageFont.truetype(regular,11*S)
 d.text((18*S,39*S),"S",font=mark,fill=(255,255,255,255))
 d.rectangle((103*S,40*S,136*S,45*S),fill=(237,20,47,255))
 d.text((100*S,58*S),"STATION",font=brand,fill=(255,255,255,255),stroke_width=0)
-d.text((102*S,100*S),"YOUR GAME LIBRARY",font=small,fill=(200,204,212,255))
+d.text((102*S,100*S),"NOVA",font=ImageFont.truetype(bold,19*S),fill=(252,44,67,255))
 d.line((103*S,128*S,295*S,128*S),fill=(79,81,93,255),width=1*S)
 d.rectangle((102*S,137*S,151*S,158*S),fill=(231,19,44,255))
 d.text((111*S,139*S),"PS3",font=small,fill=(255,255,255,255))
@@ -37,4 +37,4 @@ d.text((169*S,139*S),"PS2",font=small,fill=(255,255,255,255))
 im=im.convert("RGB").resize((W,H),Image.LANCZOS)
 out=Path(__file__).with_name("ICON0.PNG")
 im.save(str(out),"PNG",optimize=True)
-print("STATION premium XMB artwork:",out,out.stat().st_size)
+print("STATION NOVA premium XMB artwork:",out,out.stat().st_size)
