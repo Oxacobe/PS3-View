@@ -7,6 +7,27 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import math
 
+def rounded(draw,box,radius,fill=None,outline=None,width=1):
+    """Rounded rectangle using only PIL 7 primitives (CI toolchain)."""
+    x0,y0,x1,y1=box
+    r=min(radius,(x1-x0)//2,(y1-y0)//2)
+    def corners(color,inset=0):
+        xx0,yy0,xx1,yy1=x0+inset,y0+inset,x1-inset,y1-inset
+        rr=max(1,r-inset)
+        for xy,a,b in (
+            ((xx0,yy0,xx0+2*rr,yy0+2*rr),180,270),
+            ((xx1-2*rr,yy0,xx1,yy0+2*rr),270,360),
+            ((xx0,yy1-2*rr,xx0+2*rr,yy1),90,180),
+            ((xx1-2*rr,yy1-2*rr,xx1,yy1),0,90)):
+            draw.pieslice(xy,a,b,fill=color)
+        draw.rectangle((xx0+rr,yy0,xx1-rr,yy1),fill=color)
+        draw.rectangle((xx0,yy0+rr,xx1,yy1-rr),fill=color)
+    if outline:
+        corners(outline)
+        if fill: corners(fill,min(width,(x1-x0)//4))
+    elif fill:
+        corners(fill)
+
 S=4
 W,H=320,176
 w,h=W*S,H*S
@@ -29,11 +50,11 @@ im=Image.alpha_composite(im,glow)
 # Glowing rounded glass icon panel.
 panel=Image.new("RGBA",im.size)
 d=ImageDraw.Draw(panel)
-d.rounded_rectangle((19*S,17*S,159*S,159*S),radius=25*S,fill=(14,16,23,248),
+rounded(d,(19*S,17*S,159*S,159*S),radius=25*S,fill=(14,16,23,248),
                     outline=(134,77,62,255),width=2*S)
-d.rounded_rectangle((23*S,20*S,155*S,154*S),radius=21*S,
+rounded(d,(23*S,20*S,155*S,154*S),radius=21*S,
                     outline=(58,59,71,255),width=1*S)
-d.rounded_rectangle((32*S,27*S,142*S,30*S),radius=S,fill=(92,99,118,100))
+rounded(d,(32*S,27*S,142*S,30*S),radius=S,fill=(92,99,118,100))
 im=Image.alpha_composite(im,panel)
 # A custom folded N: draw neon bloom and then polished orange ribbons.
 shape=Image.new("RGBA",im.size)
@@ -59,12 +80,12 @@ reg="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 B=lambda n:ImageFont.truetype(bold,int(n*S))
 R=lambda n:ImageFont.truetype(reg,int(n*S))
 d.text((179*S,37*S),"NOVA",font=B(29),fill=(252,251,249,255),stroke_width=0)
-d.rounded_rectangle((181*S,80*S,275*S,83*S),radius=S,fill=(255,104,33,255))
+rounded(d,(181*S,80*S,275*S,83*S),radius=S,fill=(255,104,33,255))
 d.text((180*S,95*S),"THE GAME LIBRARY",font=R(10),fill=(205,205,210,255))
 d.text((180*S,117*S),"PS3    /    PS2",font=B(11),fill=(249,126,55,255))
 d.text((180*S,144*S),"STATION",font=R(8),fill=(120,123,136,255))
 d.line((20*S,169*S,300*S,169*S),fill=(62,41,40,255),width=S)
-im=im.convert("RGB").resize((W,H),Image.Resampling.LANCZOS)
+im=im.convert("RGB").resize((W,H),Image.LANCZOS)
 out=Path(__file__).with_name("ICON0.PNG")
 im.save(out,"PNG",optimize=True)
 print("NOVA cinema XMB icon:",out,out.stat().st_size)
