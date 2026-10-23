@@ -63,12 +63,12 @@ static char message[128]="SELECT A GAME TO PLAY";
 static int show_error=0;
 static int network_ready=0;
 
-static const u32 C_BG=RGBA(9,10,14,255);
-static const u32 C_CARD=RGBA(24,25,30,255);
-static const u32 C_EDGE=RGBA(59,61,70,255);
-static const u32 C_BLUE=RGBA(233,22,47,255);
+static const u32 C_BG=RGBA(4,4,6,255);
+static const u32 C_CARD=RGBA(22,22,24,255);
+static const u32 C_EDGE=RGBA(52,52,57,255);
+static const u32 C_BLUE=RGBA(245,28,54,255);
 static const u32 C_TEXT=RGBA(246,247,250,255);
-static const u32 C_MUTED=RGBA(191,194,201,255);
+static const u32 C_MUTED=RGBA(202,203,207,255);
 
 
 /* Smooth anti-aliased font baked in CI from Pillow's freely distributable
@@ -132,11 +132,10 @@ static void text(float x,float y,const char *s,int size,u32 color,int maximum) {
     }
 }
 static void gradient(void) {
-    int y;
-    for(y=0;y<512;y+=8) {
-        int v=10+y/62;
-        rect(0,y,848,9,RGBA(v,v,v+3,255));
-    }
+    /* Flat black / red accent, intentionally never blue; unmistakable design. */
+    rect(0,0,848,512,RGBA(5,5,8,255));
+    rect(0,72,848,2,RGBA(54,17,23,255));
+    rect(0,472,848,2,RGBA(54,17,23,255));
 }
 static void frame(float x,float y,float w,float h,int active) {
     rect(x,y,w,h,active?RGBA(69,151,255,255):RGBA(44,59,79,255));
@@ -370,7 +369,7 @@ static void draw_shelf(int p,int y) {
             text(x+46,cover_y+49,p==1?"PS3":"PS2",6,C_TEXT,3);
         }
         title_label(label,sizeof(label),games[p][matching[p][shown]].title);
-        text(x+3,cover_y+139,label,3,active?C_TEXT:C_MUTED,19);
+        text(x+3,cover_y+139,label,4,active?C_TEXT:C_MUTED,19);
     }
     if(matches[p]==0){
         rect(31,base+30,785,132,RGBA(27,28,35,255));
@@ -415,7 +414,7 @@ static void draw_message(void) {
     rect(102,160,643,4,show_error?RGBA(248,170,59,255):C_BLUE);
     text(129,185,show_error?"CANNOT MOUNT GAME":"GAME READY",7,C_TEXT,26);
     text(130,233,message,5,C_TEXT,58);
-    text(130,292,exit_frames?"RETURNING TO XMB - OPEN DISC OR CLASSICS ICON":"PRESS O TO CLOSE",4,C_MUTED,62);
+    text(130,292,exit_frames?"IF GAME DOES NOT START, SELECT MOUNTED ICON IN XMB":"PRESS O TO CLOSE",4,C_MUTED,70);
 }
 static void render(void) {
     char status[110];
@@ -428,17 +427,17 @@ static void render(void) {
     gradient();
     rect(0,0,848,70,RGBA(8,9,13,255));
     rect(0,0,6,70,C_BLUE);
-    text(31,13,"STATION",11,C_TEXT,10);
-    text(262,26,"THE GAME COLLECTION",4,C_MUTED,28);
+    text(31,13,"STATION NOVA",9,C_TEXT,18);
+    text(335,27,"THE GAME COLLECTION",4,C_MUTED,23);
     if(query[0])snprintf(status,sizeof(status),"SEARCH: %.21s",query);
     else snprintf(status,sizeof(status),"%d TITLES  /  SELECT TO SEARCH",count[0]+count[1]);
-    text(564,27,status,3,C_MUTED,31);
+    text(618,27,"V0.4 - NOVA",3,RGBA(254,105,115,255),25);
     draw_shelf(1,81);
     rect(31,270,785,1,RGBA(51,53,62,255));
     draw_shelf(0,276);
     rect(0,474,848,38,RGBA(8,9,13,255));
     rect(0,474,848,1,C_EDGE);
-    text(24,484,"X MOUNT   /   SQUARE SEARCH   /   TRIANGLE RESCAN",3,C_TEXT,70);
+    text(24,484,"X PLAY   /   SQUARE SEARCH   /   TRIANGLE RESCAN",3,C_TEXT,70);
     text(683,484,"O EXIT",3,C_MUTED,12);
     if(search_mode)draw_search();
     if(show_details)draw_message();
@@ -500,28 +499,39 @@ static int encode_game_path(const char *path,char *encoded,size_t capacity) {
 static void launch_selected(void) {
     char encoded[1500],command[1600];
     Entry *game;
+    int play_sent=0;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
     if(!encode_game_path(game->path,encoded,sizeof(encoded))) {
-        snprintf(message,sizeof(message),"INVALID GAME PATH");show_error=show_details=1;return;
+        snprintf(message,sizeof(message),"INVALID GAME PATH");
+        show_error=show_details=1;return;
     }
     if(tab==0 && !folder_exists("/dev_hdd0/game/PS2U10000")) {
         snprintf(message,sizeof(message),"PS2 CLASSICS LAUNCHER NOT FOUND");
         show_error=show_details=1;return;
     }
-    /* webMAN's /mount_ps3 bypasses its normal in-game mount restriction.
-     * XMB auto-start from a running homebrew app is not reliable.
-     * We mount first, confirm an HTTP response, then exit cleanly.
-     * User completes launch from the corresponding XMB icon. */
+    /* First mount while still in a game/homebrew context. webMAN's
+     * /mount_ps3 endpoint explicitly bypasses its in-game mount guard.
+     * Then ask the plugin to queue/execute launch on the XMB. If the
+     * PS3 VSH declines, the game remains mounted for manual launching. */
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
-    snprintf(message,sizeof(message),"CONTACTING WEBMAN...");
+    snprintf(message,sizeof(message),"MOUNTING SELECTED GAME...");
     show_details=1;show_error=0;render();
     if(!webman_http(command)) {
-        snprintf(message,sizeof(message),"WEBMAN NOT READY. CHECK HEN AND GAME PATH.");
+        snprintf(message,sizeof(message),"MOUNT FAILED - CHECK HEN / WEBMAN");
         show_error=show_details=1;return;
     }
-    snprintf(message,sizeof(message),tab==1?"PS3 GAME MOUNTED":"PS2 CLASSIC MOUNTED");
-    show_error=0;show_details=1;exit_frames=90;
+    usleep(280000);
+    /* A successful HTTP response means webMAN accepted the command,
+     * not that a PS3 game actually started: the real-console test is vital. */
+    play_sent=webman_http(tab==1?"/play.ps3":"/play.ps3?PS2U10000");
+    if(play_sent) {
+        snprintf(message,sizeof(message),"WEBMAN LAUNCH REQUEST SENT");
+    } else {
+        snprintf(message,sizeof(message),
+            tab==1?"MOUNTED - USE PS3 DISC ICON":"MOUNTED - USE PS2 CLASSICS ICON");
+    }
+    show_error=0;show_details=1;exit_frames=42;
 }
 static void online_lookup(void) {
     char path[640];
