@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "source/**"
+      - "assets/**"
       - "Makefile"
       - ".github/workflows/build.yml"
 
@@ -29,6 +30,9 @@ jobs:
           echo "PSL1GHT=${PSL1GHT}"
           command -v powerpc64-ps3-elf-gcc || command -v ppu-gcc
           test -f "${PSL1GHT}/ppu_rules"
+      - name: Generate branded PS3 XMB icon
+        shell: bash
+        run: python3 assets/create_icon.py
       - name: Compile and build installable PKG
         shell: bash
         run: |
