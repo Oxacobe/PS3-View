@@ -661,10 +661,13 @@ static int webman_http(const char *endpoint) {
 static int webman_queue_xmb_launch(const char *endpoint) {
     struct sockaddr_in server;
     struct timeval t={2,0};
-    char req[512];
+    char req[2000];
     size_t len;
     int fd,total=0,n;
+    if(!network_ready) network_ready=(netInitialize()>=0);
     if(!network_ready)return 0;
+    /* webMAN's receive buffer is 2048 bytes (HTML_RECV_SIZE). */
+    if(strlen(endpoint)+64>sizeof(req))return 0;
     fd=socket(PF_INET,SOCK_STREAM,IPPROTO_TCP);
     if(fd<0)return 0;
     setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&t,sizeof(t));
@@ -730,39 +733,39 @@ static void find_ps2_classics_id(char *out,size_t cap) {
     }
     sysLv2FsCloseDir(fd);
 }
-/* NOVA 1.6: one HTTP multi-command chain, executed by webMAN on XMB.
+/* NOVA 1.7: webMAN's own launch commands, run from the XMB after NOVA exits.
  *
- * Root causes found in upstream webMAN-MOD source (23 Oct 2026):
- *  - www_client.h: a /mount_ps3 received while a game (NOVA) is running is
- *    rewritten to /mount.ps3, a branch that never sets ap_param. Mount, no
- *    autoplay. This is why every version mounted but nothing started.
- *  - pad_combo_play.h: a BARE /play.ps3 (1.2, 1.5) reaches
- *    exec_xmb_item(col,seg) with EMPTY strings, not NULL, so the
- *    "game"/"seg_device" defaults are never applied: no disc icon target.
- *  - vsh.h: wait_for_abort() returns at once while IS_INGAME. If the chain
- *    reaches /play.ps3 before NOVA has really gone, it silently gives up.
- *  - mount.h auto_play (1.4): waits 15 s for the game to close, then quits
- *    if explore_plugin is not loaded yet.
+ * Test result of 1.6 on the console: on PS2 the chain pressed X on the
+ * NOVA icon (NOVA re-opened), so the chained request DOES survive NOVA's
+ * exit and webMAN DOES press X. The target was wrong: "seg=<title id>" is
+ * not an XMB segment. On PS3 the disc was focused but the press did not
+ * start it.
  *
- * 1.6 therefore asks webMAN, over the same localhost HTTP server that
- * already mounts successfully, to:
- *   sleep 3 s (NOVA is certainly gone), wait for explore_plugin (XMB),
- *   settle 5 s, show a popup (diagnostic), then press X on an EXPLICIT
- *   XMB item: game/seg_device (PS3 disc icon) or game/<PS2 Classics ID>.
- * www_client.h splits commands on ";/" and runs them in order on the
- * webMAN thread without needing NOVA's socket to stay open.
+ * 1.7 stops hand-driving the XMB and uses the two routes webMAN itself
+ * documents in include/cmd/pad_combo_play.h:
+ *   /play.ps3<path>      mount <path> and start game from disc icon
+ *                        (forced autoplay: ap_param = 2, the same route the
+ *                        webMAN browser page uses). Sent from XMB context,
+ *                        so it is not downgraded to mount-only.
+ *   /play.ps3?<titleid>  start an installed title via /app_home
+ *                        (used for the PS2 Classics placeholder).
+ * Two popups bracket the launch step so a failure can be located:
+ *   "step 1" = chain reached XMB;  "step 2" = launch command returned
+ *   without starting anything.
  */
-#define NOVA_CHAIN_PREFIX "/wait.ps3?3;/wait.ps3?xmb;/wait.ps3?5;" \
-                          "/popup.ps3?NOVA%201.6%3A%20XMB%20ready%2C%20starting%20game;"
-static int build_xmb_launch_chain(int ps3,const char *titleid,char *out,size_t cap) {
+#define NOVA_CHAIN_PREFIX "/wait.ps3?3;/wait.ps3?xmb;/wait.ps3?6;" \
+                          "/popup.ps3?NOVA%201.7%20step%201%3A%20XMB%20ready;"
+#define NOVA_CHAIN_SUFFIX ";/popup.ps3?NOVA%201.7%20step%202%3A%20launch%20command%20finished"
+static int build_xmb_launch_chain(int ps3,const char *encoded_path,const char *titleid,
+                                  char *out,size_t cap) {
     int n;
     if(ps3)
-        n=snprintf(out,cap,"%s/play.ps3?col=game&seg=seg_device",NOVA_CHAIN_PREFIX);
+        n=snprintf(out,cap,"%s/play.ps3%s%s",NOVA_CHAIN_PREFIX,encoded_path,NOVA_CHAIN_SUFFIX);
     else {
         size_t i;
         if(!titleid || strlen(titleid)!=9)return 0;
         for(i=0;i<9;i++)if(!isalnum((unsigned char)titleid[i]))return 0;
-        n=snprintf(out,cap,"%s/play.ps3?col=game&seg=%s",NOVA_CHAIN_PREFIX,titleid);
+        n=snprintf(out,cap,"%s/play.ps3?%s%s",NOVA_CHAIN_PREFIX,titleid,NOVA_CHAIN_SUFFIX);
     }
     return n>0 && (size_t)n<cap;
 }
@@ -802,7 +805,7 @@ static int has_boot_file(const char *path) {
 static void log_launch_stage(const char *stage,const Entry *game,const char *target) {
     FILE *f=fopen("/dev_hdd0/tmp/station_nova_launch.log","wb");
     if(!f)return;
-    fprintf(f,"STATION NOVA 1.6\nplatform=%s\nstage=%s\n",
+    fprintf(f,"STATION NOVA 1.7\nplatform=%s\nstage=%s\n",
             tab==1?"PS3":"PS2",stage);
     fprintf(f,"game=%.119s\n",game?game->title:"<none>");
     fprintf(f,"source=%.479s\n",game?game->path:"<none>");
@@ -847,7 +850,7 @@ static void clear_legacy_pending_requests(void) {
  * scanning, not an EBOOT path). R2+X remains mount-only fallback.
  */
 static void launch_selected(void) {
-    char encoded[1500],command[1600],chain[400],titleid[16]={0};
+    char encoded[1500],command[1600],chain[1800],titleid[16]={0};
     Entry *game;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
@@ -855,50 +858,58 @@ static void launch_selected(void) {
         snprintf(message,sizeof(message),"INVALID GAME PATH");
         show_error=show_details=1;return;
     }
-
-    /* DO NOT MODIFY: user-confirmed webMAN mount from NOVA 1.1-1.5. */
-    snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
-    snprintf(message,sizeof(message),"WEBMAN MOUNTING YOUR GAME...");
     show_details=1;show_error=0;exit_frames=0;
-    log_launch_stage("mount_request",game,NULL);
-    render();
-    if(!webman_http(command)) {
-        snprintf(message,sizeof(message),"WEBMAN MOUNT FAILED - CHECK HEN");
-        show_error=show_details=1;
-        log_launch_stage("mount_http_failure",game,NULL);
-        return;
+
+    /* R2+X (both platforms) and PS2 one-press: the console-verified
+     * in-game mount from NOVA 1.1-1.6. For PS2 it prepares the Classics
+     * placeholder, which the chain then starts. */
+    if(launch_mode_manual || tab==0) {
+        snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
+        snprintf(message,sizeof(message),"WEBMAN MOUNTING YOUR GAME...");
+        log_launch_stage("mount_request",game,NULL);
+        render();
+        if(!webman_http(command)) {
+            snprintf(message,sizeof(message),"WEBMAN MOUNT FAILED - CHECK HEN");
+            show_error=1;
+            log_launch_stage("mount_http_failure",game,NULL);
+            return;
+        }
+        if(launch_mode_manual) {
+            snprintf(message,sizeof(message),tab==1?
+                "PS3 MOUNTED - OPEN DISC IN XMB":
+                "PS2 MOUNTED - OPEN CLASSICS IN XMB");
+            exit_frames=65;
+            log_launch_stage("mount_only_user_override",game,NULL);
+            return;
+        }
+        find_ps2_classics_id(titleid,sizeof(titleid));
     }
 
-    if(launch_mode_manual) {
+    /* PS3 one-press: no in-game mount. webMAN mounts AND starts the game
+     * itself from XMB context (/play.ps3<path>), exactly like clicking
+     * the game in webMAN's own browser page. */
+    if(!build_xmb_launch_chain(tab==1,encoded,titleid,chain,sizeof(chain))) {
         snprintf(message,sizeof(message),tab==1?
-            "PS3 MOUNTED - OPEN DISC IN XMB":
-            "PS2 MOUNTED - OPEN CLASSICS IN XMB");
-        show_details=1;show_error=0;exit_frames=65;
-        log_launch_stage("mount_only_user_override",game,NULL);
-        return;
-    }
-
-    if(tab==0)find_ps2_classics_id(titleid,sizeof(titleid));
-    if(!build_xmb_launch_chain(tab==1,titleid,chain,sizeof(chain))) {
-        snprintf(message,sizeof(message),"MOUNTED - START FROM XMB");
-        show_details=1;show_error=0;exit_frames=65;
+            "PATH TOO LONG - USE R2+X":"MOUNTED - START FROM XMB");
+        exit_frames=65;
         log_launch_stage("chain_build_failed",game,titleid);
         return;
     }
+    snprintf(message,sizeof(message),"HANDING OVER TO WEBMAN...");
+    render();
     log_launch_stage("xmb_chain_sending",game,chain);
     if(!webman_queue_xmb_launch(chain)) {
         snprintf(message,sizeof(message),tab==1?
-            "PS3 MOUNTED - USE DISC ICON":
+            "WEBMAN NOT REACHED - CHECK HEN":
             "PS2 MOUNTED - USE CLASSICS ICON");
-        show_details=1;show_error=0;exit_frames=65;
+        show_error=(tab==1);exit_frames=65;
         log_launch_stage("xmb_chain_send_failed",game,chain);
         return;
     }
     log_launch_stage("xmb_chain_sent_hands_off",game,chain);
     snprintf(message,sizeof(message),"RETURNING TO XMB - HANDS OFF THE PAD");
-    show_details=1;show_error=0;
-    /* Exit promptly; webMAN runs the chain once the XMB is back.
-     * Arrows, L2 or Circle on XMB abort webMAN autoplay by design. */
+    /* webMAN runs the chain once the XMB is back (about 10 seconds).
+     * D-pad, L2 or Circle on the XMB abort webMAN autoplay by design. */
     exit_frames=20;
 }
 static void online_lookup(void) {

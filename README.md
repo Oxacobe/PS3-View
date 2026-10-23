@@ -1,6 +1,6 @@
-# STATION NOVA 1.6 — one-press launch, root cause fixed
+# STATION NOVA 1.7 — webMAN-native launch from XMB
 
-**Separate installer, STN000016.** Installs alongside 1.2–1.5; overwrites nothing.
+**Separate installer, STN000017.** Installs alongside earlier versions; overwrites nothing.
 
 ## Why 1.2–1.5 mounted but never launched (from webMAN-MOD source)
 
@@ -10,29 +10,33 @@
 4. `include/mount/mount.h` (1.4's `/play.ps3/<path>`): waits only 15 s for the game to close, then quits if the XMB's explore_plugin hasn't loaded yet.
 5. 1.5's `wm_request` file is only polled by the **Full** edition with the PhotoGUI/"Poll wm_request" option on, and still carried the bare `/play.ps3`.
 
-## What 1.6 does on X
+## What the 1.6 console test proved
 
-1. Same proven `/mount_ps3<path>` as 1.1–1.5 (unchanged, awaited).
-2. One HTTP multi-command chain to webMAN (supported: `www_client.h` splits on `;/`):
+- PS2: the chain pressed X on the NOVA icon (NOVA re-opened). So the chained request survives NOVA's exit and webMAN does press X. `seg=<title id>` was simply not an XMB segment.
+- PS3: the disc icon was focused but the press did not start it.
+
+## What 1.7 does on X
+
+- **PS3:** no in-game mount. After NOVA exits, webMAN runs its own documented `/play.ps3<path>` ("mount <path> and start game from disc icon", forced autoplay) from XMB context — the same route as clicking the game in webMAN's browser page.
+- **PS2:** the proven in-game `/mount_ps3` prepares the Classics placeholder; after NOVA exits, webMAN runs `/play.ps3?<Classics title ID>` (start an installed title) from XMB context.
+
+Chain sent in both cases:
 
 ```
-/wait.ps3?3 ; /wait.ps3?xmb ; /wait.ps3?5 ;
-/popup.ps3?NOVA 1.6: XMB ready, starting game ;
-/play.ps3?col=game&seg=seg_device        (PS3 disc icon)
-/play.ps3?col=game&seg=<PS2 Classics ID> (PS2, e.g. PS2U10000)
+/wait.ps3?3 ; /wait.ps3?xmb ; /wait.ps3?6 ;
+/popup.ps3?NOVA 1.7 step 1: XMB ready ;
+<launch command> ;
+/popup.ps3?NOVA 1.7 step 2: launch command finished
 ```
-
-3. NOVA exits. webMAN waits until NOVA is gone and the XMB is loaded, then presses X on an **explicit** XMB icon — the same icon you already start manually.
 
 ## Reading the test
 
 | What you see | Meaning |
 | --- | --- |
-| Popup, then the game starts | Fixed |
-| Popup, game does not start | Chain survives; XMB item press is the problem. Report which platform |
-| No popup at all | webMAN's chain did not run after NOVA exited |
-
-Don't touch the D-pad, L2 or Circle on XMB during those ~10 seconds: webMAN aborts autoplay on those buttons by design.
+| Step 1 popup, game starts | Fixed |
+| Step 1, then step 2, no game | webMAN ran the launch and it returned without starting the game |
+| Step 1 only, no game | launch command hung or was aborted (D-pad / L2 / Circle pressed?) |
+| No popup | chain did not run after NOVA exited |
 
 ## Controls
 
