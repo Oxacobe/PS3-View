@@ -44,3 +44,12 @@ Do not rewrite this matrix as if both consoles were previously **proven** to aut
 The visual design and webMAN mounting have been solved. The asynchronous launch handoff remains **unverified**, not 'almost working'. Do not conflate GitHub Actions build green with console runtime behaviour. Explicitly state what is known, unknown and what the next controlled test establishes.
 
 Relevant upstream code: https://github.com/aldostools/webMAN-MOD/blob/master/include/cmd/pad_combo_play.h, https://github.com/aldostools/webMAN-MOD/blob/master/include/mount/mount.h, https://github.com/aldostools/webMAN-MOD/blob/master/include/feat/script.h
+
+## Update — root causes confirmed in webMAN-MOD source (NOVA 1.6)
+
+- `/mount_ps3` while IS_INGAME is rewritten to `/mount.ps3`, which never sets `ap_param`: mount-only by design (`www_client.h`, `mount_copy.h`).
+- Correction to item 3 above: HTTP multi-commands ARE supported; `www_client.h` splits on `;/`. 1.2's chain failed for other reasons: bare `/play.ps3` passes empty `col`/`seg` strings to `exec_xmb_item`, so no XMB item is targeted; and if explore_plugin stayed loaded during NOVA, `/wait.ps3?xmb` returned at once and the launch ran while still in-game, where `wait_for_abort()` returns immediately.
+- 1.5: `wm_request` is polled only with PHOTO_GUI (Full edition) and the "Poll wm_request" option, and it still sent bare `/play.ps3`.
+- 0.5 and 0.7 used identical direct-spawn code yet behaved differently; direct EBOOT spawn bypasses XMB boot context and is game-dependent. Not used in 1.6.
+
+1.6 sends `/wait.ps3?3;/wait.ps3?xmb;/wait.ps3?5;/popup.ps3?...;/play.ps3?col=game&seg=<seg_device|PS2 title ID>`. The popup separates "chain never ran" from "XMB press failed". Still requires console confirmation.
