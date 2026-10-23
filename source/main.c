@@ -39,6 +39,7 @@
 #define PAD_SQUARE  0x0080
 #define PAD_SELECT  0x0100
 #define PAD_L2      0x0001
+#define PAD_R2      0x0002
 #define PAD_CIRCLE  0x0020
 #define PAD_TRIANGLE 0x0010
 #define PAD_R1      0x0008
@@ -65,6 +66,7 @@ static pngData cover_data[2*PER_PAGE];
 static u32 font_offset=0;
 static char message[128]="SELECT A GAME TO PLAY";
 static int show_error=0;
+static int launch_mode_manual=0;
 static int network_ready=0;
 
 static const u32 C_BG=RGBA(4,4,6,255);
@@ -582,6 +584,86 @@ static int webman_http(const char *endpoint) {
     response[received]=0;
     return strstr(response," 200 ") || strstr(response," 202 ") || strstr(response," 302 ");
 }
+/* Queue a two-command webMAN request on the webMAN server thread.
+ * This HTTP request is intentionally NOT awaited: its first command waits
+ * until VSH returns to XMB, which cannot happen while NOVA is still open.
+ *
+ * Sequence is document-supported: /wait.ps3?xmb;/play.ps3[?TITLEID]
+ * The socket is sent in full and closed; no onxmb.bat or startup plugin.
+ * HTTP accepted is not proof the game started; on failure users can use
+ * the already-mounted game from XMB.
+ */
+static int webman_queue_xmb_launch(const char *endpoint) {
+    struct sockaddr_in server;
+    struct timeval t={2,0};
+    char req[512];
+    size_t len;
+    int fd,total=0,n;
+    if(!network_ready)return 0;
+    fd=socket(PF_INET,SOCK_STREAM,IPPROTO_TCP);
+    if(fd<0)return 0;
+    setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&t,sizeof(t));
+    memset(&server,0,sizeof(server));
+    server.sin_family=AF_INET;
+    server.sin_addr.s_addr=htonl(0x7f000001);
+    server.sin_port=htons(80);
+    if(connect(fd,(struct sockaddr *)&server,sizeof(server))<0) {
+        close(fd);return 0;
+    }
+    snprintf(req,sizeof(req),
+        "GET %s HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",endpoint);
+    len=strlen(req);
+    while(total<(int)len) {
+        n=send(fd,req+total,len-total,0);
+        if(n<=0){close(fd);return 0;}
+        total+=n;
+    }
+    /* webMAN has received a complete request. Deliberately do not recv()
+     * because /wait.ps3?xmb must execute AFTER this process ends. */
+    shutdown(fd,SHUT_WR);
+    close(fd);
+    return 1;
+}
+static int sfo_has_words(const char *path,const char *words) {
+    unsigned char b[8192];
+    size_t n,i,j,k=strlen(words);
+    FILE *f=fopen(path,"rb");
+    if(!f)return 0;
+    n=fread(b,1,sizeof(b),f);
+    fclose(f);
+    if(n<k)return 0;
+    for(i=0;i+k<=n;i++){
+        for(j=0;j<k;j++)
+            if(toupper(b[i+j])!=toupper((unsigned char)words[j]))break;
+        if(j==k)return 1;
+    }
+    return 0;
+}
+static void find_ps2_classics_id(char *out,size_t cap) {
+    int fd;
+    u64 read;
+    sysFSDirent e;
+    snprintf(out,cap,"PS2U10000"); /* Official Classics Placeholder title ID */
+    /* If the standard location exists, do not waste time scanning. */
+    if(folder_exists("/dev_hdd0/game/PS2U10000"))return;
+    if(sysLv2FsOpenDir("/dev_hdd0/game",&fd)!=0)return;
+    for(;;) {
+        char sfo[560];
+        int j,valid=1;
+        memset(&e,0,sizeof(e));read=sizeof(e);
+        if(sysLv2FsReadDir(fd,&e,&read)!=0 || read==0)break;
+        if(strlen(e.d_name)!=9)continue;
+        for(j=0;j<9;j++)if(!isalnum((unsigned char)e.d_name[j]))valid=0;
+        if(!valid)continue;
+        snprintf(sfo,sizeof(sfo),"/dev_hdd0/game/%s/PARAM.SFO",e.d_name);
+        if(sfo_has_words(sfo,"PS2 Classics Launcher") ||
+           sfo_has_words(sfo,"PS2 Classics Placeholder")) {
+            snprintf(out,cap,"%s",e.d_name);
+            break;
+        }
+    }
+    sysLv2FsCloseDir(fd);
+}
 static int encode_game_path(const char *path,char *encoded,size_t capacity) {
     static const char hex[]="0123456789ABCDEF";
     size_t o=0,i;
@@ -637,38 +719,60 @@ static void clear_legacy_pending_requests(void) {
     unlink("/dev_hdd0/tmp/nova_xmb_ps3.once");
     unlink("/dev_hdd0/tmp/nova_xmb_ps2.once");
 }
+/* One press: mount known-good route, hand an XMB wait+play request
+ * to webMAN, exit normally. Hold R2+X to mount only as verified fallback. */
 static void launch_selected(void) {
-    char encoded[1500],command[1600];
+    char encoded[1500],command[1600],handoff[128],titleid[16]={0};
     Entry *game;
+    int auto_request_ok=0;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
     if(!encode_game_path(game->path,encoded,sizeof(encoded))) {
         snprintf(message,sizeof(message),"INVALID GAME PATH");
         show_error=show_details=1;return;
     }
-    /* PS2 content scanned exclusively from encrypted *.BIN.ENC.
-     * Do not check a hard-coded EBOOT.BIN path: installed Placeholder
-     * paths / title IDs may vary, and XMB owns its app launch. */
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
-    snprintf(message,sizeof(message),"WEBMAN IS MOUNTING YOUR GAME");
+    snprintf(message,sizeof(message),"WEBMAN MOUNTING YOUR GAME...");
     show_details=1;show_error=0;exit_frames=0;
     log_launch_stage("mount_request",game,NULL);
     render();
     if(!webman_http(command)) {
-        snprintf(message,sizeof(message),"WEBMAN NOT RESPONDING - CHECK HEN");
+        snprintf(message,sizeof(message),"WEBMAN MOUNT FAILED - CHECK HEN");
         show_error=show_details=1;
-        log_launch_stage("webman_mount_http_failed",game,NULL);
+        log_launch_stage("mount_http_failure",game,NULL);
         return;
     }
-    log_launch_stage(tab==1?"ps3_mounted_open_disc_from_xmb":
-                         "ps2_mounted_open_classics_placeholder",game,NULL);
-    snprintf(message,sizeof(message),tab==1?
-             "PS3 MOUNTED. OPEN DISC ICON ON XMB":
-             "PS2 MOUNTED. OPEN PS2 CLASSICS ON XMB");
+    if(launch_mode_manual) {
+        snprintf(message,sizeof(message),tab==1?
+            "PS3 MOUNTED - OPEN DISC IN XMB":
+            "PS2 MOUNTED - OPEN CLASSICS IN XMB");
+        show_details=1;show_error=0;exit_frames=65;
+        log_launch_stage("mount_only_user_override",game,NULL);
+        return;
+    }
+    if(tab==1) {
+        snprintf(handoff,sizeof(handoff),"/wait.ps3?xmb;/play.ps3");
+    } else {
+        find_ps2_classics_id(titleid,sizeof(titleid));
+        snprintf(handoff,sizeof(handoff),
+                 "/wait.ps3?xmb;/play.ps3?%s",titleid);
+    }
+    log_launch_stage("xmb_launch_queue_request",game,handoff);
+    auto_request_ok=webman_queue_xmb_launch(handoff);
+    if(auto_request_ok) {
+        snprintf(message,sizeof(message),tab==1?
+            "PS3: ONE-CLICK LAUNCH REQUESTED":
+            "PS2: CLASSICS LAUNCH REQUESTED");
+        log_launch_stage("xmb_launch_queued_unconfirmed",game,handoff);
+    } else {
+        snprintf(message,sizeof(message),tab==1?
+            "PS3 MOUNTED - USE DISC ICON":
+            "PS2 MOUNTED - USE CLASSICS ICON");
+        log_launch_stage("xmb_launch_queue_failed",game,handoff);
+    }
     show_details=1;show_error=0;
-    /* Exit normally without spawning other processes. The player
-     * completes launch via the existing, working webMAN/XMB workflow. */
-    exit_frames=95;
+    /* Never spawn EBOOTs or install persistent launch hooks. */
+    exit_frames=25;
 }
 static void online_lookup(void) {
     char path[640];
@@ -760,7 +864,10 @@ int main(void) {
             if(pressed&PAD_RIGHT)move_selection(tab,1);
             if(pressed&PAD_SQUARE || pressed&PAD_SELECT){search_mode=1;keypos=0;}
             if(pressed&PAD_TRIANGLE)refresh();
-            if(pressed&PAD_CROSS)launch_selected();
+            if(pressed&PAD_CROSS) {
+                launch_mode_manual=(buttons&PAD_R2)!=0;
+                launch_selected();
+            }
         }
         if(loaded_off[0]!=offset[0] || loaded_off[1]!=offset[1])begin_cover_stream();
         render();
