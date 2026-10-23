@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 
 CELL_W, CELL_H = 24, 32
-font = ImageFont.load_default(size=23)
+font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 23)
 data = []
 widths = []
 for code in range(32, 128):
