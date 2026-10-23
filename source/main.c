@@ -68,11 +68,11 @@ static int show_error=0;
 static int network_ready=0;
 
 static const u32 C_BG=RGBA(4,4,6,255);
-static const u32 C_CARD=RGBA(22,22,24,255);
-static const u32 C_EDGE=RGBA(52,52,57,255);
-static const u32 C_ACCENT=RGBA(245,28,54,255);
+static const u32 C_CARD=RGBA(22,23,30,255);
+static const u32 C_EDGE=RGBA(50,51,63,255);
+static const u32 C_ACCENT=RGBA(255,116,45,255);
 static const u32 C_TEXT=RGBA(246,247,250,255);
-static const u32 C_MUTED=RGBA(202,203,207,255);
+static const u32 C_MUTED=RGBA(166,169,181,255);
 
 
 /* Font atlas: GPU TINY3D_TEX_FORMAT_A8R8G8B8 uses AARRGGBB texels;
@@ -136,12 +136,20 @@ static void text(float x,float y,const char *s,int size,u32 color,int maximum) {
     }
 }
 static void gradient(void) {
-    /* Dark cinema UI: subtle neutral gradient, never bright blue. */
+    /* Minimalist OLED cinema, rendered in RGB quads, not a browser. */
     int y;
     for(y=0;y<512;y+=8) {
-        int v=9+(y<265?y/95:(512-y)/125);
-        rect(0,y,848,8,RGBA(v,v,v+2,255));
+        int v=8+y/175;
+        rect(0,y,848,8,RGBA(v,v+1,v+6,255));
     }
+    /* Restrained copper highlights, not bright 8-bit full-screen blue. */
+    for(y=0;y<75;y+=5) {
+        int fade=(75-y)/6;
+        rect(0,y,848,5,RGBA(13+fade,11+fade/3,17+fade/3,255));
+    }
+    rect(0,0,848,2,RGBA(198,66,21,255));
+    rect(24,275,800,1,RGBA(48,44,49,255));
+    rect(24,493,800,1,RGBA(48,44,49,255));
 }
 static int suffix(const char *s,const char *extension) {
     size_t n=strlen(s),e=strlen(extension);
@@ -430,31 +438,37 @@ static void draw_shelf_row(int p,int row,int y) {
         int active=(focus_row==row_index && chosen[p]==at);
         char label[32];
         if(at>=matches[p])break;
-        /* No artificial panels around unselected images, like Netflix. */
+        /* Compact, glossy floating covers with subtle edge and real
+         * 3-layer amber focus indicator. No expensive new textures. */
         if(active) {
-            rect(x-3,top-3,96,79,RGBA(253,254,255,255));
-            rect(x-1,top-1,92,75,C_ACCENT);
+            rect(x-4,top-4,98,80,RGBA(74,35,25,255));
+            rect(x-3,top-3,96,78,RGBA(255,157,68,255));
+            rect(x-1,top-1,92,74,RGBA(30,23,23,255));
+        } else {
+            rect(x+2,top+3,90,73,RGBA(4,5,9,255));
         }
-        rect(x,top,90,72,RGBA(22,23,28,255));
+        rect(x,top,90,72,RGBA(23,24,33,255));
         if(cover_offset[slot])image(x+1,top+1,88,70,slot);
         else {
-            rect(x+18,top+4,52,64,RGBA(37,39,46,255));
-            rect(x+18,top+4,3,64,C_ACCENT);
-            text(x+26,top+26,p==1?"PS3":"PS2",5,C_TEXT,3);
+            rect(x+22,top+6,47,60,RGBA(37,39,50,255));
+            rect(x+22,top+6,3,60,p==1?RGBA(255,140,75,255):RGBA(103,124,183,255));
+            text(x+28,top+25,p==1?"PS3":"PS2",5,C_TEXT,3);
         }
         title_label(label,sizeof(label),games[p][matching[p][at]].title);
-        text(x,top+76,label,3,active?C_TEXT:C_MUTED,16);
+        text(x,top+77,label,3,active?C_TEXT:C_MUTED,16);
+        if(active)rect(x,top+91,90,2,C_ACCENT);
     }
 }
 static void draw_platform(int p,int header) {
     char counter[40];
-    if(tab==p)rect(24,header+1,3,15,C_ACCENT);
-    text(35,header,p==1?"PLAYSTATION 3":"PLAYSTATION 2",5,C_TEXT,20);
-    snprintf(counter,sizeof(counter),"%d TITLES",matches[p]);
-    text(735,header+3,counter,3,C_MUTED,12);
+    rect(24,header-2,799,2,RGBA(41,40,49,255));
+    rect(25,header+2,3,14,p==1?C_ACCENT:RGBA(116,138,190,255));
+    text(36,header,p==1?"PLAYSTATION 3":"PS2 CLASSICS",5,C_TEXT,20);
+    snprintf(counter,sizeof(counter),"%d GAMES",matches[p]);
+    text(744,header+3,counter,3,C_MUTED,13);
     draw_shelf_row(p,0,header+25);
     draw_shelf_row(p,1,header+116);
-    if(matches[p]==0)text(35,header+64,"NO GAMES FOUND",5,C_MUTED,26);
+    if(matches[p]==0)text(35,header+64,"NO GAMES IN THIS SHELF",4,C_MUTED,34);
 }
 static void draw_search(void) {
     int i;
@@ -486,41 +500,49 @@ static void draw_search(void) {
     text(95,448,hint,3,C_MUTED,34);
 }
 static void draw_message(void) {
-    rect(102,160,643,179,RGBA(8,9,15,255));
-    rect(102,160,643,4,show_error?RGBA(248,170,59,255):C_ACCENT);
-    text(129,185,show_error?"LAUNCH NOT COMPLETED":"GAME READY",7,C_TEXT,26);
-    text(130,233,message,5,C_TEXT,58);
-    text(130,292,exit_frames?"IF GAME DOES NOT START, SELECT MOUNTED ICON IN XMB":"PRESS O TO CLOSE",4,C_MUTED,70);
+    rect(99,152,653,195,RGBA(2,3,6,255));
+    rect(104,156,644,187,RGBA(24,25,34,255));
+    rect(104,156,644,4,show_error?RGBA(236,82,58,255):C_ACCENT);
+    text(128,184,show_error?"WEBMAN CONNECTION ISSUE":"GAME MOUNTED",7,C_TEXT,35);
+    text(130,234,message,5,C_TEXT,75);
+    if(exit_frames)
+        text(130,296,"RETURNING TO XMB - LAUNCH FROM ITS GAME ICON",4,C_MUTED,76);
+    else
+        text(130,296,"CIRCLE TO RETURN TO YOUR LIBRARY",4,C_MUTED,73);
 }
 static void render(void) {
     char selection[72],meta[55];
     const Entry *active=NULL;
-    tiny3d_Clear(0xFF09090Cu,TINY3D_CLEAR_ALL);
+    tiny3d_Clear(0xFF090B10u,TINY3D_CLEAR_ALL);
     tiny3d_AlphaTest(1,0x10,TINY3D_ALPHA_FUNC_GEQUAL);
     tiny3d_BlendFunc(1,TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
         TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ZERO,
         TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
     tiny3d_Project2D();
     gradient();
-    rect(0,0,848,49,RGBA(7,7,11,255));
-    rect(23,13,4,23,C_ACCENT);
-    text(37,10,"STATION",9,C_TEXT,11);
-    text(258,20,"NOVA",5,C_ACCENT,5);
-    text(298,21,"1.0 XMB",3,C_MUTED,11);
+    /* Simple, confident lock-up in a compact 512-line console scene. */
+    rect(0,3,848,47,RGBA(11,12,18,255));
+    rect(24,12,4,30,C_ACCENT);
+    text(37,12,"NOVA",8,C_TEXT,9);
+    text(156,24,"CINEMA",3,C_ACCENT,10);
     if(matches[tab] && chosen[tab]<matches[tab])
         active=&games[tab][matching[tab][chosen[tab]]];
-    if(active)snprintf(selection,sizeof(selection),"%.38s",active->title);
+    if(active)snprintf(selection,sizeof(selection),"%.37s",active->title);
     else snprintf(selection,sizeof(selection),"YOUR GAME LIBRARY");
-    text(341,16,selection,4,C_TEXT,39);
-    snprintf(meta,sizeof(meta),"%d TITLES",count[0]+count[1]);
-    text(753,18,meta,3,C_MUTED,16);
-    if(safe_cover_mode)text(566,34,"ART SAFE MODE",3,C_ACCENT,22);
-    draw_platform(1,53);
-    rect(25,279,799,1,RGBA(42,42,48,255));
+    text(260,18,selection,4,C_TEXT,38);
+    snprintf(meta,sizeof(meta),"%d GAMES",count[0]+count[1]);
+    rect(727,14,103,25,RGBA(37,35,38,255));
+    text(738,18,meta,3,C_TEXT,13);
+    if(safe_cover_mode)text(572,36,"ARTWORK SAFE",2,C_ACCENT,20);
+    draw_platform(1,54);
     draw_platform(0,282);
-    rect(0,497,848,15,RGBA(9,9,13,255));
-    text(25,498,"X PLAY  SQUARE SEARCH  D-PAD ROWS  TRIANGLE RESCAN  HOLD L2 = SAFE MODE",2,C_MUTED,110);
-    text(766,498,"O EXIT",2,C_MUTED,10);
+    /* Quiet bottom command bar, with realistic post-mount instruction. */
+    rect(0,495,848,17,RGBA(13,13,20,255));
+    text(26,497,"X MOUNT",3,C_ACCENT,10);
+    text(124,497,"SQUARE SEARCH",3,C_MUTED,20);
+    text(298,497,"D-PAD NAVIGATE",3,C_MUTED,22);
+    text(510,497,"TRIANGLE REFRESH",3,C_MUTED,23);
+    text(731,497,"O EXIT",3,C_MUTED,9);
     if(search_mode)draw_search();
     if(show_details)draw_message();
     tiny3d_Flip();
@@ -596,137 +618,57 @@ static int has_boot_file(const char *path) {
 static void log_launch_stage(const char *stage,const Entry *game,const char *target) {
     FILE *f=fopen("/dev_hdd0/tmp/station_nova_launch.log","wb");
     if(!f)return;
-    fprintf(f,"STATION NOVA XMB 1.0\nplatform=%s\nstage=%s\n",
+    fprintf(f,"STATION NOVA CINEMA 1.1\nplatform=%s\nstage=%s\n",
             tab==1?"PS3":"PS2",stage);
     fprintf(f,"game=%.119s\n",game?game->title:"<none>");
     fprintf(f,"source=%.479s\n",game?game->path:"<none>");
     fprintf(f,"target=%s\n",target?target:"<none>");
     fclose(f);
 }
-/*
- * One-press launch is a VSH action, not an EBOOT spawn from running homebrew.
- * webMAN documents the onxmb.bat event when VSH returns to XMB.
- *
- * We install only our OWN tiny hook, and ONLY when no other onxmb.bat exists.
- * Existing user startup scripts are never overwritten or appended to.
- * Our script is inert unless one of our single-use markers exists. Each
- * marker is DELETED BEFORE launch, preventing repeated launches on XMB.
- *
- * Note: if the console powers off before this handoff, the one-shot marker
- * might still exist and may execute on the next return to XMB. Delete
- * /dev_hdd0/tmp/nova_xmb_ps3.once and nova_xmb_ps2.once if recovering.
+/* STATION NOVA CINEMA 1.1: verified two-stage handoff.
+ * Always mount through webMAN's in-game-safe /mount_ps3 endpoint.
+ * Then return to XMB. PS3 starts from mounted DISC icon.
+ * PS2 Classics starts from installed Classics Placeholder icon.
+ * No EBOOT spawning, no onxmb scripts, no launcher-path guesses.
  */
-#define NOVA_XMB_HOOK "/dev_hdd0/onxmb.bat"
-#define NOVA_PS3_ONCE "/dev_hdd0/tmp/nova_xmb_ps3.once"
-#define NOVA_PS2_ONCE "/dev_hdd0/tmp/nova_xmb_ps2.once"
-#define NOVA_HOOK_SIGNATURE "# STATION NOVA XMB HANDOFF 1.0"
-static const char nova_hook_text[] =
-    NOVA_HOOK_SIGNATURE "\n"
-    "# Only executes after returning to XMB; one request per marker.\n"
-    "if exist " NOVA_PS3_ONCE "\n"
-    "  del " NOVA_PS3_ONCE "\n"
-    "  wait 2\n"
-    "  /play.ps3\n"
-    "end if\n"
-    "if exist " NOVA_PS2_ONCE "\n"
-    "  del " NOVA_PS2_ONCE "\n"
-    "  wait 2\n"
-    "  /play.ps3?PS2U10000\n"
-    "end if\n"
-    "\n";
-
-static int ensure_own_xmb_hook(void) {
-    FILE *existing=fopen(NOVA_XMB_HOOK,"rb");
-    if(existing) {
-        char prefix[64]={0};
-        size_t n=fread(prefix,1,sizeof(prefix)-1,existing);
-        fclose(existing);
-        prefix[n]=0;
-        /* Never replace a script that belongs to webMAN or the user. */
-        return strncmp(prefix,NOVA_HOOK_SIGNATURE,
-                        strlen(NOVA_HOOK_SIGNATURE))==0;
-    }
-    {
-        int fd=open(NOVA_XMB_HOOK,O_WRONLY|O_CREAT|O_EXCL,0644);
-        size_t sent=0,length=strlen(nova_hook_text);
-        if(fd<0)return 0;
-        while(sent<length) {
-            ssize_t n=write(fd,nova_hook_text+sent,length-sent);
-            if(n<=0)break;
-            sent+=(size_t)n;
-        }
-        close(fd);
-        if(sent!=length) {
-            unlink(NOVA_XMB_HOOK);
-            return 0;
-        }
-    }
-    return 1;
-}
-static int stage_one_shot(int p) {
-    FILE *f;
-    /* Remove leftovers from previous launch attempts, if any. */
-    unlink(NOVA_PS3_ONCE);
-    unlink(NOVA_PS2_ONCE);
-    f=fopen(p==1?NOVA_PS3_ONCE:NOVA_PS2_ONCE,"wb");
-    if(!f)return 0;
-    if(fwrite("1\n",1,2,f)!=2) {
-        fclose(f);
-        unlink(p==1?NOVA_PS3_ONCE:NOVA_PS2_ONCE);
-        return 0;
-    }
-    return fclose(f)==0;
+static void clear_legacy_pending_requests(void) {
+    /* Files created solely by NOVA 1.0; avoid stale automatic XMB launches.
+     * No game images, settings, saves or other plugins are modified. */
+    unlink("/dev_hdd0/tmp/nova_xmb_ps3.once");
+    unlink("/dev_hdd0/tmp/nova_xmb_ps2.once");
 }
 static void launch_selected(void) {
-    Entry *game;
     char encoded[1500],command[1600];
+    Entry *game;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
     if(!encode_game_path(game->path,encoded,sizeof(encoded))) {
         snprintf(message,sizeof(message),"INVALID GAME PATH");
-        show_details=show_error=1;
-        return;
+        show_error=show_details=1;return;
     }
-    if(tab==0 && !has_boot_file("/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN")) {
-        snprintf(message,sizeof(message),"PS2 CLASSICS PLACEHOLDER PS2U10000 MISSING");
-        show_details=show_error=1;
-        log_launch_stage("ps2_placeholder_not_found",game,
-                         "/dev_hdd0/game/PS2U10000/USRDIR/EBOOT.BIN");
-        return;
-    }
-    if(!ensure_own_xmb_hook()) {
-        snprintf(message,sizeof(message),
-            "XMB SCRIPT EXISTS - WILL NOT OVERWRITE");
-        show_details=show_error=1;
-        log_launch_stage("xmb_hook_collision_or_write_failure",game,NOVA_XMB_HOOK);
-        return;
-    }
+    /* PS2 content scanned exclusively from encrypted *.BIN.ENC.
+     * Do not check a hard-coded EBOOT.BIN path: installed Placeholder
+     * paths / title IDs may vary, and XMB owns its app launch. */
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
-    snprintf(message,sizeof(message),"MOUNTING WITH WEBMAN...");
-    show_details=1;show_error=0;
+    snprintf(message,sizeof(message),"WEBMAN IS MOUNTING YOUR GAME");
+    show_details=1;show_error=0;exit_frames=0;
     log_launch_stage("mount_request",game,NULL);
     render();
     if(!webman_http(command)) {
-        snprintf(message,sizeof(message),"WEBMAN DID NOT CONFIRM MOUNT");
-        show_details=show_error=1;
-        log_launch_stage("mount_http_not_accepted",game,NULL);
+        snprintf(message,sizeof(message),"WEBMAN NOT RESPONDING - CHECK HEN");
+        show_error=show_details=1;
+        log_launch_stage("webman_mount_http_failed",game,NULL);
         return;
     }
-    if(!stage_one_shot(tab)) {
-        snprintf(message,sizeof(message),"COULD NOT STAGE XMB LAUNCH");
-        show_details=show_error=1;
-        log_launch_stage("marker_write_failed",game,NULL);
-        return;
-    }
-    log_launch_stage(tab==1?"ps3_xmb_launch_staged":"ps2_classics_xmb_staged",
-                     game,tab==1?"/play.ps3":"/play.ps3?PS2U10000");
+    log_launch_stage(tab==1?"ps3_mounted_open_disc_from_xmb":
+                         "ps2_mounted_open_classics_placeholder",game,NULL);
     snprintf(message,sizeof(message),tab==1?
-             "STARTING PS3 FROM XMB...":"STARTING PS2 CLASSICS FROM XMB...");
+             "PS3 MOUNTED. OPEN DISC ICON ON XMB":
+             "PS2 MOUNTED. OPEN PS2 CLASSICS ON XMB");
     show_details=1;show_error=0;
-    render();
-    usleep(300000);
-    /* Normal process exit; no sysProcessExitSpawn2 into commercial EBOOTs. */
-    keep_running=0;
+    /* Exit normally without spawning other processes. The player
+     * completes launch via the existing, working webMAN/XMB workflow. */
+    exit_frames=95;
 }
 static void online_lookup(void) {
     char path[640];
@@ -788,6 +730,7 @@ int main(void) {
     font_setup();
     ioPadInit(7);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0,callback,NULL);
+    clear_legacy_pending_requests();
     refresh();
     while(keep_running) {
         unsigned buttons=0,pressed;
