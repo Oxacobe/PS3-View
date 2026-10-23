@@ -22,7 +22,7 @@
 #include "ui_font_generated.h"
 
 #define MAX_GAMES 600
-#define PER_PAGE 5
+#define PER_PAGE 4
 #define GRID_COLS 4
 #define FONT_W 512
 #define FONT_H 256
@@ -66,7 +66,7 @@ static int network_ready=0;
 static const u32 C_BG=RGBA(4,4,6,255);
 static const u32 C_CARD=RGBA(22,22,24,255);
 static const u32 C_EDGE=RGBA(52,52,57,255);
-static const u32 C_BLUE=RGBA(245,28,54,255);
+static const u32 C_ACCENT=RGBA(245,28,54,255);
 static const u32 C_TEXT=RGBA(246,247,250,255);
 static const u32 C_MUTED=RGBA(202,203,207,255);
 
@@ -138,8 +138,8 @@ static void gradient(void) {
     rect(0,472,848,2,RGBA(54,17,23,255));
 }
 static void frame(float x,float y,float w,float h,int active) {
-    rect(x,y,w,h,active?RGBA(69,151,255,255):RGBA(44,59,79,255));
-    rect(x+2,y+2,w-4,h-4,RGBA(20,31,52,255));
+    rect(x,y,w,h,active?RGBA(245,28,54,255):RGBA(50,50,54,255));
+    rect(x+2,y+2,w-4,h-4,RGBA(16,16,20,255));
 }
 static int suffix(const char *s,const char *extension) {
     size_t n=strlen(s),e=strlen(extension);
@@ -346,30 +346,30 @@ static void draw_shelf(int p,int y) {
     char stats[100],label[32];
     float base=(float)y;
     u32 title_col=(p==tab)?C_TEXT:C_MUTED;
-    if(p==tab) rect(24,base+4,5,20,C_BLUE);
+    if(p==tab) rect(24,base+4,5,20,C_ACCENT);
     text(39,base,p==1?"PLAYSTATION 3":"PLAYSTATION 2",5,title_col,22);
     snprintf(stats,sizeof(stats),"%d GAMES",matches[p]);
     text(686,base+3,stats,4,C_MUTED,18);
     for(i=0;i<PER_PAGE;i++){
         int shown=offset[p]+i,slot=p*PER_PAGE+i;
-        float x=31+i*160.f,cover_y=base+28;
+        float x=31+i*198.f,cover_y=base+28;
         int active=p==tab && shown==chosen[p];
         if(shown>=matches[p])break;
         if(active){
-            rect(x-3,cover_y-3,147,138,C_BLUE);
-            rect(x,cover_y,141,132,RGBA(38,39,45,255));
+            rect(x-3,cover_y-3,183,147,C_ACCENT);
+            rect(x,cover_y,177,141,RGBA(38,38,42,255));
         }else{
-            rect(x,cover_y,141,132,RGBA(36,37,42,255));
+            rect(x,cover_y,177,141,RGBA(34,34,38,255));
         }
-        rect(x+3,cover_y+3,135,126,RGBA(15,16,21,255));
-        if(cover_offset[slot])image(x+4,cover_y+3,133,125,slot);
+        rect(x+3,cover_y+3,171,135,RGBA(15,15,18,255));
+        if(cover_offset[slot])image(x+4,cover_y+3,169,133,slot);
         else{
-            rect(x+34,cover_y+17,73,92,RGBA(43,45,53,255));
-            rect(x+34,cover_y+17,4,92,C_BLUE);
-            text(x+46,cover_y+49,p==1?"PS3":"PS2",6,C_TEXT,3);
+            rect(x+50,cover_y+17,77,100,RGBA(43,43,49,255));
+            rect(x+50,cover_y+17,4,100,C_ACCENT);
+            text(x+64,cover_y+53,p==1?"PS3":"PS2",6,C_TEXT,3);
         }
         title_label(label,sizeof(label),games[p][matching[p][shown]].title);
-        text(x+3,cover_y+139,label,4,active?C_TEXT:C_MUTED,19);
+        text(x+3,cover_y+148,label,4,active?C_TEXT:C_MUTED,19);
     }
     if(matches[p]==0){
         rect(31,base+30,785,132,RGBA(27,28,35,255));
@@ -384,8 +384,8 @@ static void draw_search(void) {
     int i;
     char hint[64];
     rect(51,49,746,417,RGBA(6,7,11,255));
-    rect(51,49,746,4,C_BLUE);
-    rect(51,462,746,4,C_BLUE);
+    rect(51,49,746,4,C_ACCENT);
+    rect(51,462,746,4,C_ACCENT);
     text(85,67,"SEARCH YOUR LIBRARY",7,C_TEXT,28);
     text(86,104,"FIND A GAME BY NAME",4,C_MUTED,32);
     rect(84,139,679,48,RGBA(31,32,40,255));
@@ -393,7 +393,7 @@ static void draw_search(void) {
     for(i=0;i<36;i++){
         float x=95+(i%9)*74.f,y=203+(i/9)*46.f;
         char v[2]={keyboard[i],0};
-        if(keypos==i)rect(x-2,y-2,61,41,C_BLUE);
+        if(keypos==i)rect(x-2,y-2,61,41,C_ACCENT);
         rect(x,y,57,37,keypos==i?RGBA(84,18,33,255):RGBA(37,38,47,255));
         text(x+20,y+7,v,6,C_TEXT,2);
     }
@@ -401,7 +401,7 @@ static void draw_search(void) {
       const char *actions[5]={"SPACE","DELETE","DONE","ONLINE","CLEAR"};
       for(i=0;i<5;i++){
           float x=95+i*133.f,y=394.f;
-          if(keypos==36+i)rect(x-2,y-2,127,44,C_BLUE);
+          if(keypos==36+i)rect(x-2,y-2,127,44,C_ACCENT);
           rect(x,y,123,40,keypos==36+i?RGBA(84,18,33,255):RGBA(37,38,47,255));
           text(x+9,y+11,actions[i],4,C_TEXT,9);
       }
@@ -411,7 +411,7 @@ static void draw_search(void) {
 }
 static void draw_message(void) {
     rect(102,160,643,179,RGBA(8,9,15,255));
-    rect(102,160,643,4,show_error?RGBA(248,170,59,255):C_BLUE);
+    rect(102,160,643,4,show_error?RGBA(248,170,59,255):C_ACCENT);
     text(129,185,show_error?"CANNOT MOUNT GAME":"GAME READY",7,C_TEXT,26);
     text(130,233,message,5,C_TEXT,58);
     text(130,292,exit_frames?"IF GAME DOES NOT START, SELECT MOUNTED ICON IN XMB":"PRESS O TO CLOSE",4,C_MUTED,70);
@@ -426,15 +426,15 @@ static void render(void) {
     tiny3d_Project2D();
     gradient();
     rect(0,0,848,70,RGBA(8,9,13,255));
-    rect(0,0,6,70,C_BLUE);
+    rect(0,0,6,70,C_ACCENT);
     text(31,13,"STATION NOVA",9,C_TEXT,18);
     text(335,27,"THE GAME COLLECTION",4,C_MUTED,23);
     if(query[0])snprintf(status,sizeof(status),"SEARCH: %.21s",query);
     else snprintf(status,sizeof(status),"%d TITLES  /  SELECT TO SEARCH",count[0]+count[1]);
     text(618,27,"V0.4 - NOVA",3,RGBA(254,105,115,255),25);
-    draw_shelf(1,81);
-    rect(31,270,785,1,RGBA(51,53,62,255));
-    draw_shelf(0,276);
+    draw_shelf(1,72);
+    rect(31,268,785,1,RGBA(65,35,39,255));
+    draw_shelf(0,273);
     rect(0,474,848,38,RGBA(8,9,13,255));
     rect(0,474,848,1,C_EDGE);
     text(24,484,"X PLAY   /   SQUARE SEARCH   /   TRIANGLE RESCAN",3,C_TEXT,70);
