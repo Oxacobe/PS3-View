@@ -729,6 +729,47 @@ static void find_ps2_classics_id(char *out,size_t cap) {
     }
     sysLv2FsCloseDir(fd);
 }
+/* NOVA 1.5 request-file handoff.
+ *
+ * Upstream webMAN-MOD include/poll/poll.h polls WM_REQUEST_FILE only when
+ * not in a game. include/www/www_client.h reads the file as an HTTP
+ * request, explicitly retries /play.ps3 while still in-game, then
+ * unlinks WM_REQUEST_FILE before executing the command.
+ *
+ * This is a real plugin-side deferred queue, unlike the earlier NOVA
+ * fire-and-forget HTTP requests. No background NOVA process, new plugin,
+ * EBOOT syscall or persistent onxmb.bat is installed.
+ *
+ * NEVER truncate an existing wm_request belonging to webMAN/another app.
+ * O_EXCL creates one request or does nothing. Deliberately don't remove
+ * request from NOVA; webMAN owns its consumption and deletion.
+ */
+#define NOVA_WM_REQUEST_FILE "/dev_hdd0/tmp/wm_request"
+static int schedule_webman_xmb_play(const char *command) {
+    int fd;
+    char req[180];
+    size_t n;
+    ssize_t sent;
+    if(!command || strncmp(command,"/play.ps3",9)!=0)return 0;
+    /* Bare URL is a valid webMAN request-file payload; upstream prepends
+     * GET if missing. Include a complete HTTP/1.0 request for clarity. */
+    snprintf(req,sizeof(req),
+        "GET %s HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        command);
+    n=strlen(req);
+    if(n==0 || n>=sizeof(req)-1)return 0;
+    fd=open(NOVA_WM_REQUEST_FILE,O_WRONLY|O_CREAT|O_EXCL,0644);
+    if(fd<0)return 0;
+    sent=write(fd,req,n);
+    if(sent!=(ssize_t)n) {
+        close(fd);
+        /* The file is ours only because O_EXCL succeeded. */
+        unlink(NOVA_WM_REQUEST_FILE);
+        return 0;
+    }
+    if(close(fd)!=0)return 0;
+    return 1;
+}
 static int encode_game_path(const char *path,char *encoded,size_t capacity) {
     static const char hex[]="0123456789ABCDEF";
     size_t o=0,i;
@@ -765,7 +806,7 @@ static int has_boot_file(const char *path) {
 static void log_launch_stage(const char *stage,const Entry *game,const char *target) {
     FILE *f=fopen("/dev_hdd0/tmp/station_nova_launch.log","wb");
     if(!f)return;
-    fprintf(f,"STATION NOVA 1.4\nplatform=%s\nstage=%s\n",
+    fprintf(f,"STATION NOVA 1.5\nplatform=%s\nstage=%s\n",
             tab==1?"PS3":"PS2",stage);
     fprintf(f,"game=%.119s\n",game?game->title:"<none>");
     fprintf(f,"source=%.479s\n",game?game->path:"<none>");
@@ -804,10 +845,15 @@ static void clear_legacy_pending_requests(void) {
  * No direct EBOOT process spawn and no scripts or startup hooks.
  * Hold R2+X to skip this experimental action, retaining mount-only.
  */
+/* NOVA 1.5: original known-good mount first, then XMB-only file queue.
+ * PS3: webMAN starts mounted disc.
+ * PS2: webMAN starts the installed PS2 Classics Launcher (title ID from
+ * scanning, not an EBOOT path). R2+X remains mount-only fallback.
+ */
 static void launch_selected(void) {
-    char encoded[1500],command[1600],play_request[1600];
+    char encoded[1500],command[1600],play_cmd[80],titleid[16]={0};
     Entry *game;
-    int accepted;
+    int queued;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
     if(!encode_game_path(game->path,encoded,sizeof(encoded))) {
@@ -815,7 +861,7 @@ static void launch_selected(void) {
         show_error=show_details=1;return;
     }
 
-    /* DO NOT CHANGE: identical console-confirmed mount call from v1.2/1.3. */
+    /* DO NOT MODIFY: user-confirmed webMAN mount from NOVA 1.1-1.4. */
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
     snprintf(message,sizeof(message),"WEBMAN MOUNTING YOUR GAME...");
     show_details=1;show_error=0;exit_frames=0;
@@ -827,6 +873,7 @@ static void launch_selected(void) {
         log_launch_stage("mount_http_failure",game,NULL);
         return;
     }
+
     if(launch_mode_manual) {
         snprintf(message,sizeof(message),tab==1?
             "PS3 MOUNTED - OPEN DISC IN XMB":
@@ -836,25 +883,33 @@ static void launch_selected(void) {
         return;
     }
 
-    /* PS3: webMAN starts disc icon. PS2 BIN.ENC: webMAN's own
-     * auto_play() handles the Classics Launcher when its ps2l setting
-     * is enabled. We do not guess title IDs or EBOOT locations. */
-    snprintf(play_request,sizeof(play_request),"/play.ps3%s",encoded);
-    log_launch_stage("native_autoplay_request",game,play_request);
-    accepted=webman_queue_xmb_launch(play_request);
-    if(accepted) {
+    if(tab==1) {
+        snprintf(play_cmd,sizeof(play_cmd),"/play.ps3");
+    } else {
+        /* Use webMAN's installed-application XMB launch path, not the
+         * raw PS2 emulator EBOOT or the encrypted image itself. */
+        find_ps2_classics_id(titleid,sizeof(titleid));
+        snprintf(play_cmd,sizeof(play_cmd),"/play.ps3?%s",titleid);
+    }
+
+    /* Queue request AFTER the successful mount and BEFORE normal exit.
+     * Plugin's poll thread picks it up on return to XMB, and deletes it
+     * on dispatch. File collision = safe manual fallback, not overwrite. */
+    log_launch_stage("wm_request_create_attempt",game,play_cmd);
+    queued=schedule_webman_xmb_play(play_cmd);
+    if(queued) {
         snprintf(message,sizeof(message),tab==1?
-            "PS3: WEBMAN AUTO-PLAY REQUESTED":
-            "PS2: CLASSICS AUTO-PLAY REQUESTED");
-        log_launch_stage("native_autoplay_sent_unconfirmed",game,play_request);
+            "PS3: XMB AUTO-PLAY REQUEST PENDING":
+            "PS2: CLASSICS PLAY REQUEST PENDING");
+        log_launch_stage("wm_request_written_not_yet_executed",game,play_cmd);
     } else {
         snprintf(message,sizeof(message),tab==1?
-            "PS3 MOUNTED - OPEN DISC ICON":
-            "PS2 MOUNTED - OPEN CLASSICS ICON");
-        log_launch_stage("native_autoplay_send_failed",game,play_request);
+            "PS3 MOUNTED - USE DISC ICON":
+            "PS2 MOUNTED - USE CLASSICS ICON");
+        log_launch_stage("wm_request_exists_or_write_failed",game,play_cmd);
     }
     show_details=1;show_error=0;
-    /* Give webMAN control of the foreground XMB promptly. */
+    /* Return XMB fast; the webMAN polling thread, not NOVA, launches. */
     exit_frames=8;
 }
 static void online_lookup(void) {
@@ -918,7 +973,7 @@ int main(void) {
     ioPadInit(7);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0,callback,NULL);
     clear_legacy_pending_requests();
-    unlink("/dev_hdd0/tmp/nova_13_play.bat"); /* inert legacy NOVA file */
+    unlink("/dev_hdd0/tmp/nova_13_play.bat"); /* NOVA-owned legacy script only */
     refresh();
     while(keep_running) {
         unsigned buttons=0,pressed;
