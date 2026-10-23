@@ -291,6 +291,14 @@ static void render(void) {
     int i;
     char stats[90];
     const int ix=chosen[tab];
+    /* Required every frame: restore Tiny3D render-state setup from working v0.1.
+     * Without 2D projection the gallery vertices do not display correctly. */
+    tiny3d_Clear(C_BG,TINY3D_CLEAR_ALL);
+    tiny3d_AlphaTest(1,0x10,TINY3D_ALPHA_FUNC_GEQUAL);
+    tiny3d_BlendFunc(1,TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
+        TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ZERO,
+        TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
+    tiny3d_Project2D();
     gradient();
     rect(0,0,848,79,RGBA(10,17,29,255));
     rect(29,20,5,39,C_BLUE);
@@ -366,6 +374,7 @@ static int webman_http(const char *endpoint) {
     int sent,total,received;
     char req[1950],response[256];
     size_t len;
+    if(!network_ready) network_ready=(netInitialize()>=0);
     if(!network_ready)return 0;
     fd=socket(PF_INET,SOCK_STREAM,IPPROTO_TCP);
     if(fd<0)return 0;
@@ -454,7 +463,7 @@ int main(void) {
     texture_mem=tiny3d_AllocTexture(TEX_BUDGET);
     font_setup();
     ioPadInit(7);
-    network_ready=(netInitialize()>=0);
+    /* Initialise network lazily when X is pressed, never while starting UI. */
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0,callback,NULL);
     refresh();
     while(keep_running) {
