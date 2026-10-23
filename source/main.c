@@ -729,39 +729,6 @@ static void find_ps2_classics_id(char *out,size_t cap) {
     }
     sysLv2FsCloseDir(fd);
 }
-/* NOVA 1.3: use webMAN's documented .bat script interpreter, rather
- * than trying to concatenate /wait.ps3 and /play.ps3 in one URL.
- *
- * The old 1.2 multi-command request was received while a game was running.
- * webMAN's URL request dispatcher can finish the first command without
- * continuing the next. Its script engine explicitly implements "wait xmb"
- * and supports /play.ps3 game-icon commands afterward.
- *
- * This is a SINGLE temporary launch request, not an installed plugin,
- * persistent onxmb.bat hook, firmware patch, or new mounting mechanism.
- */
-#define NOVA13_PLAY_SCRIPT "/dev_hdd0/tmp/nova_13_play.bat"
-static int write_one_shot_launch_script(int platform,const char *ps2id) {
-    FILE *f;
-    int ok=1;
-    /* Remove ONLY our own older temporary script from a previous attempt. */
-    unlink(NOVA13_PLAY_SCRIPT);
-    f=fopen(NOVA13_PLAY_SCRIPT,"wb");
-    if(!f)return 0;
-    if(fprintf(f,
-        "# STATION NOVA 1.3 -- one-shot XMB play request\n"
-        "# Do not attempt to execute a game before XMB is visible.\n"
-        "wait xmb\n"
-        "wait 3\n"
-        "if xmb\n"
-        "  del " NOVA13_PLAY_SCRIPT "\n"
-        "  %s\n"
-        "end if\n\n",
-        platform==1?"/play.ps3":ps2id) <=0)ok=0;
-    if(fclose(f)!=0)ok=0;
-    if(!ok){unlink(NOVA13_PLAY_SCRIPT);return 0;}
-    return 1;
-}
 static int encode_game_path(const char *path,char *encoded,size_t capacity) {
     static const char hex[]="0123456789ABCDEF";
     size_t o=0,i;
@@ -798,7 +765,7 @@ static int has_boot_file(const char *path) {
 static void log_launch_stage(const char *stage,const Entry *game,const char *target) {
     FILE *f=fopen("/dev_hdd0/tmp/station_nova_launch.log","wb");
     if(!f)return;
-    fprintf(f,"STATION NOVA CINEMA 1.1\nplatform=%s\nstage=%s\n",
+    fprintf(f,"STATION NOVA 1.4\nplatform=%s\nstage=%s\n",
             tab==1?"PS3":"PS2",stage);
     fprintf(f,"game=%.119s\n",game?game->title:"<none>");
     fprintf(f,"source=%.479s\n",game?game->path:"<none>");
@@ -822,11 +789,25 @@ static void clear_legacy_pending_requests(void) {
 /* Mount exactly like console-verified NOVA 1.2, then ask webMAN
  * to run one temporary script that waits for XMB and selects the mounted
  * PS3 disc icon or installed PS2 Classics Launcher. R2+X stays mount-only. */
+/* NOVA 1.4: preserve original proven mount first.
+ *
+ * webMAN source: include/cmd/pad_combo_play.h maps
+ * /play.ps3/<game-path> to the native force-autoplay path (ap_param=2).
+ * include/www/www_client.h then calls auto_play(param, 1).
+ * include/mount/mount.h auto_play waits for IS_INGAME to clear (15s max)
+ * and uses XMB's disc icon / PS2 Classics Launcher as appropriate.
+ *
+ * A second webMAN autoplay request is not the same as the proven
+ * /mount_ps3 call; it may invoke webMAN's mount logic again. We keep
+ * the first mount unchanged and give webMAN the full selected path.
+ *
+ * No direct EBOOT process spawn and no scripts or startup hooks.
+ * Hold R2+X to skip this experimental action, retaining mount-only.
+ */
 static void launch_selected(void) {
-    char encoded[1500],command[1600],script_request[192];
-    char titleid[16]={0},ps2play[80]={0};
+    char encoded[1500],command[1600],play_request[1600];
     Entry *game;
-    int queued=0;
+    int accepted;
     if(matches[tab]<=0)return;
     game=&games[tab][matching[tab][chosen[tab]]];
     if(!encode_game_path(game->path,encoded,sizeof(encoded))) {
@@ -834,7 +815,7 @@ static void launch_selected(void) {
         show_error=show_details=1;return;
     }
 
-    /* DO NOT CHANGE: exact known-good /mount_ps3 request from 1.2. */
+    /* DO NOT CHANGE: identical console-confirmed mount call from v1.2/1.3. */
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
     snprintf(message,sizeof(message),"WEBMAN MOUNTING YOUR GAME...");
     show_details=1;show_error=0;exit_frames=0;
@@ -846,7 +827,6 @@ static void launch_selected(void) {
         log_launch_stage("mount_http_failure",game,NULL);
         return;
     }
-
     if(launch_mode_manual) {
         snprintf(message,sizeof(message),tab==1?
             "PS3 MOUNTED - OPEN DISC IN XMB":
@@ -856,44 +836,26 @@ static void launch_selected(void) {
         return;
     }
 
-    if(tab==0) {
-        /* Ask XMB to launch the installed Classics placeholder, not the
-         * encrypted BIN.ENC EBOOT or a guessed PS2 emulator executable. */
-        find_ps2_classics_id(titleid,sizeof(titleid));
-        snprintf(ps2play,sizeof(ps2play),"/play.ps3?%s",titleid);
-    }
-    if(!write_one_shot_launch_script(tab,ps2play)) {
+    /* PS3: webMAN starts disc icon. PS2 BIN.ENC: webMAN's own
+     * auto_play() handles the Classics Launcher when its ps2l setting
+     * is enabled. We do not guess title IDs or EBOOT locations. */
+    snprintf(play_request,sizeof(play_request),"/play.ps3%s",encoded);
+    log_launch_stage("native_autoplay_request",game,play_request);
+    accepted=webman_queue_xmb_launch(play_request);
+    if(accepted) {
+        snprintf(message,sizeof(message),tab==1?
+            "PS3: WEBMAN AUTO-PLAY REQUESTED":
+            "PS2: CLASSICS AUTO-PLAY REQUESTED");
+        log_launch_stage("native_autoplay_sent_unconfirmed",game,play_request);
+    } else {
         snprintf(message,sizeof(message),tab==1?
             "PS3 MOUNTED - OPEN DISC ICON":
             "PS2 MOUNTED - OPEN CLASSICS ICON");
-        show_details=1;show_error=0;exit_frames=65;
-        log_launch_stage("temp_launch_script_write_failed",game,NULL);
-        return;
-    }
-
-    /* The webMAN script parser will block at "wait xmb" until NOVA exits.
-     * Do not wait for the HTTP reply while the foreground game is running.
-     * webMAN file script launch syntax: /play.ps3/<absolute-path>.bat
-     */
-    snprintf(script_request,sizeof(script_request),
-             "/play.ps3%s",NOVA13_PLAY_SCRIPT);
-    log_launch_stage("webman_script_dispatch",game,script_request);
-    queued=webman_queue_xmb_launch(script_request);
-    if(queued) {
-        snprintf(message,sizeof(message),tab==1?
-            "PS3: LAUNCHING MOUNTED DISC":
-            "PS2: STARTING CLASSICS PLACEHOLDER");
-        log_launch_stage("xmb_script_queued_unconfirmed",game,script_request);
-    } else {
-        unlink(NOVA13_PLAY_SCRIPT);
-        snprintf(message,sizeof(message),tab==1?
-            "PS3 MOUNTED - USE DISC ICON":
-            "PS2 MOUNTED - USE CLASSICS ICON");
-        log_launch_stage("xmb_script_dispatch_failed",game,script_request);
+        log_launch_stage("native_autoplay_send_failed",game,play_request);
     }
     show_details=1;show_error=0;
-    /* Normal, clean exit; no direct EBOOT spawn or XMB startup hooks. */
-    exit_frames=25;
+    /* Give webMAN control of the foreground XMB promptly. */
+    exit_frames=8;
 }
 static void online_lookup(void) {
     char path[640];
@@ -956,7 +918,7 @@ int main(void) {
     ioPadInit(7);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0,callback,NULL);
     clear_legacy_pending_requests();
-    unlink(NOVA13_PLAY_SCRIPT); /* clear stale script from earlier crash */
+    unlink("/dev_hdd0/tmp/nova_13_play.bat"); /* inert legacy NOVA file */
     refresh();
     while(keep_running) {
         unsigned buttons=0,pressed;
