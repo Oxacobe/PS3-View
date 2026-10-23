@@ -1,53 +1,69 @@
-# STATION NOVA 1.4 — native webMAN autoplay test
+# STATION NOVA 1.5 — XMB-deferred one-press launcher candidate
 
-**Separate PS3 app, STN000014.** This builds alongside the user-approved 1.2 (STN000012) and 1.3 (STN000013), with no overwrite of earlier versions.
+**A separate native PS3 installer, STN000015.** Installs alongside the 1.2 visual/mount baseline, 1.3 and 1.4; does not overwrite them.
 
-## Proven baseline (unchanged)
+## What has already worked on the user's actual PS3
 
-- Identical Tiny3D cinematic UI, game covers, layout, hero, navigation, custom XMB icon and progressive cover loading as versions 1.2/1.3.
-- Identical confirmed mounting command on PS3 and encrypted PS2: `snprintf(command,sizeof(command),"/mount_ps3%s",encoded)` followed by `webman_http(command)`. No changes to game scanning or mounts.
-- User confirmed both platforms mount, but v1.2 and v1.3 each returned to XMB instead of automatically starting games.
-- R2 + X still requests **mount-only** and returns the user to XMB, preserving the previously working two-step path.
+- Version 0.5: PS3 direct launch worked at least once; later similar direct-spawn attempts crashed, so that mechanism is NOT restored.
+- Version 1.1 and later: webMAN `/mount_ps3` successfully mounts PS3 games and encrypted PS2 BIN.ENC games.
+- Version 1.2's premium Tiny3D cinematic interface, generated icon and streaming 32-cover library have been explicitly approved.
+- Version 1.2–1.4: attempted asynchronous HTTP/script automatic handoffs FAILED. They returned to XMB without starting a game.
 
-## Why 1.4 changes approach
+## Why 1.5 is fundamentally different
 
-Inspection of the upstream webMAN MOD source showed:
+After the unchanged, successful `/mount_ps3` request, NOVA 1.5 does NOT send another HTTP request or create an XMB event script.
 
-1. `/play.ps3/<game path>` invokes the native **force autoplay** route, not merely a play-disc request. Code: `include/cmd/pad_combo_play.h` rewrites the request to mount and sets `ap_param=2`.
-2. When handling this mode, `include/www/www_client.h` invokes `auto_play(param, 1)`.
-3. `auto_play` in `include/mount/mount.h` waits up to 15 seconds for the in-game state to end, then attempts to launch via the XMB. This path also contains logic for encrypted BIN.ENC via PS2 Classics Launcher.
+Instead, it exclusively creates `/dev_hdd0/tmp/wm_request`, webMAN MOD's **own deferred-command mailbox**.
 
-Thus, v1.4 retains the known-good `/mount_ps3` request **first**, but replaces v1.3's unsupported/unverified temporary batch-launch mechanism with an asynchronous `/play.ps3<encoded full path>` request. This may cause webMAN to invoke its own mount logic a second time, but NOVA does not change its original mounting behaviour. NOVA exits in about eight render frames to release control promptly.
+By inspecting upstream webMAN MOD, we established:
 
-WebMAN's PS2 Classics auto-launch branch depends on the relevant webMAN PS2 Launcher setting (`ps2l`) and installed Placeholder. NOVA does not alter settings or assume a hard-coded EBOOT path.
+1. `include/poll/poll.h` polls that request file only when not in-game, so it can be consumed after NOVA exits and XMB returns.
+2. `include/www/www_client.h` reads the file, adds `GET` to an endpoint that begins with `/`, retries `/play.ps3` while still in-game (up to 30 seconds), and deletes the file before executing.
+3. `include/cmd/pad_combo_play.h` defines `/play.ps3` as the mounted PS3 disc launch command, and `/play.ps3?TITLEID` as the launch of an installed title such as the PS2 Classics Launcher.
 
-**No claim of console verification.** The plugin must accept the second request, wait for XMB, and launch the game on the user's real HEN system. It may still return to XMB without launching. If it does, the already-mounted XMB icon remains the reliable fallback.
+NOVA writes **only the endpoint**, never a complete HTTP request, because webMAN's parser rewrites spaces in the queued text.
 
-## Safety
+### Single X press
 
-- No direct retail EBOOT spawn.
-- No persistent `/dev_hdd0/onxmb.bat` hook, launch marker or plugin installation.
-- No 1.3 `.bat` launch script: a stale `/dev_hdd0/tmp/nova_13_play.bat` is removed on NOVA 1.4 startup, without touching other files.
-- Game ISOs, PS2 BIN.ENC files, saves, webMAN configuration and HEN settings are not modified.
-- Art-safe mode: hold L2 during opening to bypass PNG decoding.
-- If HEN freezes or the console unexpectedly restarts, stop testing. The user-tested 1.2 is still installed.
+- PS3: mount selected PS3 ISO/folder game through the unchanged `/mount_ps3<encoded full path>`; then create `wm_request` containing exactly `/play.ps3`; exit normally.
+- PS2: mount the selected encrypted BIN.ENC through the exact same known-good method; use the detected installed PS2 Classics Launcher title ID, normally PS2U10000, to write `/play.ps3?TITLEID`; exit normally.
+- webMAN, not NOVA, detects its mailbox from the XMB context and attempts the final disc-icon / Classics Launcher action.
+- If the global mailbox already exists, NOVA refuses the *automatic* attempt rather than overwriting another application's pending webMAN command. No game is mounted in that case; the previous mount-only mode remains available.
 
-## Controller
+**Status: designed and cloud-compiled, NOT YET TESTED ON THE USER'S CONSOLE.** It depends on this webMAN plugin build enabling `WM_REQUEST` and polling. HTTP source-code analysis alone cannot guarantee a specific installed SPRX supports it.
 
-| Action | Controller |
+## Safety and fallback
+
+- **R2+X** is the console-tested **mount only** behaviour from 1.2. It bypasses queue creation.
+- X is the automatic request-file handoff; if the game doesn't launch, it should remain mounted for manual starting from XMB.
+- No new plugin, permanent startup script, EBOOT spawn, firmware change, game modification or saved-data operation.
+- NOVA never overwrites/deletes a foreign `/dev_hdd0/tmp/wm_request`. If that file remains after an unsuccessful test, **do not repeatedly retry**; use IrisMAN to inspect the file first. A pending command could run on a later return to XMB.
+- The only other cleanup is the same old NOVA-owned `.bat` from v1.3, if present, and two obsolete NOVA-specific v1.0 markers already cleared in earlier builds.
+- If HEN freezes/restarts, stop testing immediately and use version 1.2. Its source and packaging remain preserved separately.
+
+## Full graphical experience
+
+**Zero intentional Tiny3D visual changes** from the user-approved 1.2/1.3/1.4 artwork: starfield and copper planet header, clean dark sidebar, eight portrait covers across in two PS3 + two PS2 rows, dynamic selected-title display, orange selection glow, controller legend, low-stress cover streaming, 3 MB gallery budget and L2 art-safe startup mode.
+
+## Controls
+
+| Input | Function |
 | --- | --- |
-| Mount and request native webMAN autoplay | X |
-| Mount only and exit to XMB | R2 + X |
-| Select game | D-pad |
-| Jump PS3 / PS2 shelf | L1 / R1 |
-| Search | Square or Select |
-| Refresh | Triangle |
-| Exit / close message | Circle |
+| X | Mount selected game, enqueue XMB launch through webMAN's `wm_request` mailbox |
+| R2 + X | Mount only, open mounted PS3 disc / PS2 Classics on XMB manually |
+| D-pad | Navigate game covers and four rows |
+| L1 / R1 | Focus PS3 / PS2 library |
+| Square / Select | Search |
+| Triangle | Rescan |
+| Circle | Exit |
+| Hold L2 when opening | Disable artwork decoding |
 
-## Source references
+## Evidence and references
 
-- webMAN official web commands: https://github.com/aldostools/webMAN-MOD/wiki/Web-Commands
-- webMAN source: https://github.com/aldostools/webMAN-MOD/blob/master/include/cmd/pad_combo_play.h
-- webMAN autoplay logic: https://github.com/aldostools/webMAN-MOD/blob/master/include/mount/mount.h
-- Proven visual build: https://github.com/Oxacobe/PS3-View/tree/recovery/nova-1.2-visuals-confirmed-perfect
-- Previous 1.3 build: https://github.com/Oxacobe/PS3-View/tree/recovery/nova-1.3-before-native-autoplay
+- Investigative record: `docs/launch-regression-investigation.md`.
+- User-approved, frozen 1.2 source: `recovery/nova-1.2-visuals-confirmed-perfect`.
+- Previous native force-autoplay attempt: `recovery/nova-1.4-before-request-file-handoff`.
+- webMAN poll: https://github.com/aldostools/webMAN-MOD/blob/master/include/poll/poll.h
+- webMAN request-file interpreter: https://github.com/aldostools/webMAN-MOD/blob/master/include/www/www_client.h
+- webMAN game launch: https://github.com/aldostools/webMAN-MOD/blob/master/include/cmd/pad_combo_play.h
+- Cloud build: https://github.com/Oxacobe/PS3-View/actions/workflows/build.yml
