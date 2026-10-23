@@ -276,8 +276,31 @@ static void covers_for_page(void) {
         memset(&tmp,0,sizeof(tmp));
         pngLoadFromFile(games[p][matching[p][idx]].cover,&tmp);
         if(!tmp.bmp_out)continue;
+        /* Scale covers for a 90x72 tile before copying to RSX memory.
+         * Loading 32 original PNGs could exhaust the 20 MB texture arena.
+         * Keep each texture at up to 256 px, preserving aspect ratio. */
+        if(tmp.width>256||tmp.height>256) {
+            unsigned longer=tmp.width>tmp.height?tmp.width:tmp.height;
+            unsigned dw=(tmp.width*256u)/longer;
+            unsigned dh=(tmp.height*256u)/longer;
+            unsigned dpitch=(dw*4u+63u)&~63u;
+            unsigned char *smaller=(unsigned char *)calloc((size_t)dpitch*dh,1);
+            unsigned y,x;
+            if(!dw||!dh||!smaller){free(tmp.bmp_out);continue;}
+            for(y=0;y<dh;y++) {
+                unsigned sy=(y*tmp.height)/dh;
+                for(x=0;x<dw;x++) {
+                    unsigned sx=(x*tmp.width)/dw;
+                    memcpy(smaller+y*dpitch+x*4u,
+                           (unsigned char *)tmp.bmp_out+sy*tmp.pitch+sx*4u,4);
+                }
+            }
+            free(tmp.bmp_out);
+            tmp.bmp_out=smaller;
+            tmp.width=dw;tmp.height=dh;tmp.pitch=dpitch;
+        }
         n=(unsigned)(tmp.pitch*tmp.height);
-        if(n<16||n+15u>TEX_BUDGET-used||tmp.width>1024||tmp.height>1024){
+        if(n<16||n+15u>TEX_BUDGET-used){
             free(tmp.bmp_out);continue;
         }
         RSX_MEMCPY(write,tmp.bmp_out,n);
@@ -358,9 +381,21 @@ static void image(float x,float y,float w,float h,int slot) {
 
 
 static void title_label(char *dest,size_t capacity,const char *src) {
-    size_t n=strlen(src);
-    if(n>18)snprintf(dest,capacity,"%.15s...",src);
-    else snprintf(dest,capacity,"%s",src);
+    size_t i=0;
+    /* The font is variable-width. Clip to the actual ~90px tile width,
+     * not a fixed number of characters that spills onto the next card. */
+    if(!capacity)return;
+    dest[0]=0;
+    while(src[i] && i+1<capacity) {
+        dest[i]=src[i];
+        dest[i+1]=0;
+        if(line_width(dest,12.f,(int)i+1)>85.f)break;
+        i++;
+    }
+    if(src[i]) {
+        while(i>0 && line_width(dest,12.f,(int)i)>62.f)dest[--i]=0;
+        if(i+4<capacity)strcat(dest,"...");
+    }
 }
 static void draw_shelf_row(int p,int row,int y) {
     int i;
