@@ -384,7 +384,7 @@ static void launch_selected(void) {
         show_error=show_details=1;
         return;
     }
-    snprintf(command,sizeof(command),"/%s/%s",tab==0?"mount.ps3":"play.ps3",encoded);
+    snprintf(command,sizeof(command),"/%s%s",tab==0?"mount.ps3":"play.ps3",encoded);
     if(!webman_http(command)) {
         snprintf(message,sizeof(message),"WEBMAN NOT RESPONDING - ENABLE HEN");
         show_error=show_details=1;
