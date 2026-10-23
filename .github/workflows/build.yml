@@ -36,7 +36,8 @@ jobs:
       - name: Generate smooth scalable UI font
         shell: bash
         run: |
-          python3 -m pip install --quiet --disable-pip-version-check 'Pillow==10.4.0'
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pil fonts-dejavu-core
           python3 assets/gen_font.py
       - name: Compile and build installable PKG
         shell: bash
