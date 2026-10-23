@@ -184,11 +184,11 @@ static void covers_for_page(void) {
         pngLoadFromFile(games[tab][idx].cover,&tmp);
         if(!tmp.bmp_out)continue;
         n=(unsigned)(tmp.pitch*tmp.height);
-        if(n<16 || n>TEX_BUDGET-used || tmp.width>1024 || tmp.height>1024) {
+        if(n<16 || n+15u>TEX_BUDGET-used || tmp.width>1024 || tmp.height>1024) {
             free(tmp.bmp_out);continue;
         }
-        n=(n+15u)&~15u;
         RSX_MEMCPY(write,tmp.bmp_out,n);
+        n=(n+15u)&~15u;
         free(tmp.bmp_out);
         tmp.bmp_out=0;
         cover_offset[i]=tiny3d_TextureOffset(write);
