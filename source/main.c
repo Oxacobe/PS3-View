@@ -146,6 +146,33 @@ static int folder_exists(const char *p) {
     if(sysLv2FsOpenDir(p,&fd)==0) {sysLv2FsCloseDir(fd);return 1;}
     return 0;
 }
+static int cover_exists(const char *p) {
+    FILE *f=fopen(p,"rb");
+    if(!f)return 0;
+    fclose(f);
+    return 1;
+}
+static void find_cover(Entry *e,const char *dir,const char *name,int folder) {
+    char base[256],c[620];
+    size_t n;
+    if(folder)return;
+    snprintf(base,sizeof(base),"%s",name);
+    n=strlen(base);
+    if(suffix(base,".BIN.ENC")&&n>8)base[n-8]=0;
+    else if(suffix(base,".ISO")&&n>4)base[n-4]=0;
+    /* webMAN MOD accepts either full filename.PNG or basename.PNG. */
+    if(cover_exists(e->cover))return;
+    snprintf(c,sizeof(c),"%s/%s.PNG",dir,base);
+    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
+    snprintf(c,sizeof(c),"%s/%s.png",dir,name);
+    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
+    snprintf(c,sizeof(c),"%s/%s.png",dir,base);
+    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
+    snprintf(c,sizeof(c),"/dev_hdd0/tmp/wmtmp/%s.PNG",base);
+    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
+    snprintf(c,sizeof(c),"/dev_hdd0/tmp/wmtmp/%s.png",base);
+    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
+}
 static void push_game(int platform,const char *dir,const char *name,int isfolder) {
     Entry *e;
     size_t n,i;
@@ -159,6 +186,7 @@ static void push_game(int platform,const char *dir,const char *name,int isfolder
     else
         snprintf(e->cover,sizeof(e->cover),"%s/%s.PNG",dir,name);
 
+    find_cover(e,dir,name,isfolder);
     n=strlen(e->title);
     if(suffix(e->title,".BIN.ENC") && n>=8) e->title[n-8]=0;
     else if(suffix(e->title,".ISO") && n>=4) e->title[n-4]=0;
@@ -237,7 +265,17 @@ static void covers_for_page(void) {
 }
 static void image(float x,float y,float w,float h,int slot) {
     const pngData *p=&cover_data[slot];
-    if(!cover_offset[slot])return;
+    float ratio,box;
+    if(!cover_offset[slot] || !p->width || !p->height)return;
+    ratio=(float)p->width/(float)p->height;
+    box=w/h;
+    if(ratio>box) {
+        float nh=w/ratio;
+        y+=(h-nh)*.5f;h=nh;
+    } else {
+        float nw=h*ratio;
+        x+=(w-nw)*.5f;w=nw;
+    }
     tiny3d_SetTexture(0,cover_offset[slot],p->width,p->height,p->pitch,
                       TINY3D_TEX_FORMAT_A8R8G8B8,TEXTURE_LINEAR);
     tiny3d_SetPolygon(TINY3D_QUADS);
