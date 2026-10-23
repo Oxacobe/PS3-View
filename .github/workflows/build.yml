@@ -11,7 +11,7 @@ on:
       - ".github/workflows/build.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -58,3 +58,14 @@ jobs:
             *.pkg
             *.self
             EBOOT.BIN
+      - name: Name installer for download
+        shell: bash
+        run: cp station.pkg STATION_NOVA_1.6.pkg
+      - name: Publish public download link
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nova-1.6
+          name: STATION NOVA 1.6
+          body: "Tap STATION_NOVA_1.6.pkg below to download. Installs separately from earlier versions."
+          files: STATION_NOVA_1.6.pkg
+          make_latest: true
