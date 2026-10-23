@@ -10,8 +10,8 @@ endif
 #---------------------------------------------------------------------------------
 #  TITLE, APPID, CONTENTID, ICON0 SFOXML before ppu_rules.
 #---------------------------------------------------------------------------------
-TITLE		:=	STATION NOVA XMB
-APPID		:=	STN000010
+TITLE		:=	STATION NOVA CINEMA
+APPID		:=	STN000011
 CONTENTID	:=	UP0001-$(APPID)_00-0000000000000000
 ICON0		:=	assets/ICON0.PNG
 
