@@ -862,6 +862,21 @@ static void launch_selected(void) {
         show_error=show_details=1;return;
     }
 
+    /* webMAN owns its global request queue. Never overwrite, remount over,
+     * or race a pending command left by another app or an old attempt. */
+    if(!launch_mode_manual) {
+        FILE *pending=fopen(NOVA_WM_REQUEST_FILE,"rb");
+        if(pending) {
+            fclose(pending);
+            snprintf(message,sizeof(message),
+                "WEBMAN ALREADY HAS A PENDING XMB COMMAND");
+            show_error=show_details=1;
+            log_launch_stage("wm_request_pending_collision",game,
+                             NOVA_WM_REQUEST_FILE);
+            return;
+        }
+    }
+
     /* DO NOT MODIFY: user-confirmed webMAN mount from NOVA 1.1-1.4. */
     snprintf(command,sizeof(command),"/mount_ps3%s",encoded);
     snprintf(message,sizeof(message),"WEBMAN MOUNTING YOUR GAME...");
