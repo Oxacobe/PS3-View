@@ -506,6 +506,7 @@ static void render(void) {
     rect(23,13,4,23,C_ACCENT);
     text(37,10,"STATION",9,C_TEXT,11);
     text(258,20,"NOVA",5,C_ACCENT,5);
+    text(298,21,"0.7",3,C_MUTED,6);
     if(matches[tab] && chosen[tab]<matches[tab])
         active=&games[tab][matching[tab][chosen[tab]]];
     if(active)snprintf(selection,sizeof(selection),"%.38s",active->title);
