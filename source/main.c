@@ -16,6 +16,7 @@
 #include <sysutil/sysutil.h>
 #include <io/pad.h>
 #include <pngdec/pngdec.h>
+#include <jpgdec/jpgdec.h>
 #include <tiny3d.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -236,26 +237,72 @@ static int cover_exists(const char *p) {
     fclose(f);
     return 1;
 }
+/* Look up covers where webMAN MOD looks: beside each image, in its
+ * thumbnail cache, and by title ID in shared cover repositories. */
+static int use_cover(Entry *e,const char *dir,const char *stem) {
+    static const char *ext[]={".PNG",".png",".JPG",".jpg",".JPEG",".jpeg"};
+    char p[620];
+    int i;
+    if(!stem || !stem[0])return 0;
+    for(i=0;i<6;i++){
+        int n=snprintf(p,sizeof(p),"%s/%s%s",dir,stem,ext[i]);
+        if(n<=0 || (size_t)n>=sizeof(p))continue;
+        if(cover_exists(p)){
+            snprintf(e->cover,sizeof(e->cover),"%s",p);
+            return 1;
+        }
+    }
+    return 0;
+}
+/* Recognise TITLE IDs such as BLES01164 and BLUS30614 even when
+ * enclosed in brackets or appended to a descriptive ISO filename. */
+static void name_title_id(const char *name,char id[10]) {
+    size_t i,j,n=strlen(name);
+    id[0]=0;
+    for(i=0;i+9<=n;i++){
+        if(i && isalnum((unsigned char)name[i-1]))continue;
+        if(i+9<n && isalnum((unsigned char)name[i+9]))continue;
+        for(j=0;j<4;j++)if(!isalpha((unsigned char)name[i+j]))break;
+        if(j!=4)continue;
+        for(j=4;j<9;j++)if(!isdigit((unsigned char)name[i+j]))break;
+        if(j!=9)continue;
+        for(j=0;j<4;j++)id[j]=(char)toupper((unsigned char)name[i+j]);
+        memcpy(id+4,name+i+4,5);id[9]=0;
+        return;
+    }
+}
 static void find_cover(Entry *e,const char *dir,const char *name,int folder) {
-    char base[256],c[620];
-    size_t n;
+    static const char *cache_dirs[]={
+        "/dev_hdd0/tmp/wmtmp",
+        "/dev_hdd0/tmp/wmtmp/covers"
+    };
+    static const char *id_dirs[]={
+        "/dev_hdd0/game/BLES80608/USRDIR/covers",
+        "/dev_hdd0/tmp/game_repo/main/covers",
+        "/dev_hdd0/game/NPEA00374/USRDIR/covers",
+        "/dev_hdd0/game/MANAGUNZ0/USRDIR/covers",
+        "/dev_hdd0/GAMES/covers",
+        "/dev_hdd0/GAMEZ/covers"
+    };
+    char base[256],id[10];
+    size_t i,n;
     if(folder)return;
     snprintf(base,sizeof(base),"%s",name);
     n=strlen(base);
     if(suffix(base,".BIN.ENC")&&n>8)base[n-8]=0;
     else if(suffix(base,".ISO")&&n>4)base[n-4]=0;
-    /* webMAN MOD accepts either full filename.PNG or basename.PNG. */
+    name_title_id(base,id);
+    /* Local custom artwork gets priority. Keep PS2 Classics' .BIN.ENC.PNG. */
     if(cover_exists(e->cover))return;
-    snprintf(c,sizeof(c),"%s/%s.PNG",dir,base);
-    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
-    snprintf(c,sizeof(c),"%s/%s.png",dir,name);
-    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
-    snprintf(c,sizeof(c),"%s/%s.png",dir,base);
-    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
-    snprintf(c,sizeof(c),"/dev_hdd0/tmp/wmtmp/%s.PNG",base);
-    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
-    snprintf(c,sizeof(c),"/dev_hdd0/tmp/wmtmp/%s.png",base);
-    if(cover_exists(c)){snprintf(e->cover,sizeof(e->cover),"%s",c);return;}
+    if(use_cover(e,dir,name)||use_cover(e,dir,base)||
+       use_cover(e,dir,id))return;
+    for(i=0;i<sizeof(cache_dirs)/sizeof(cache_dirs[0]);i++)
+        if(use_cover(e,cache_dirs[i],name)||
+           use_cover(e,cache_dirs[i],base)||
+           use_cover(e,cache_dirs[i],id))return;
+    if(!id[0])return;
+    for(i=0;i<sizeof(id_dirs)/sizeof(id_dirs[0]);i++)
+        if(use_cover(e,id_dirs[i],id))return;
 }
 static void push_game(int platform,const char *dir,const char *name,int isfolder) {
     Entry *e;
@@ -350,7 +397,9 @@ static void begin_cover_stream(void) {
     stream_slot=0;stream_delay=8;stream_bytes=0;
     loaded_off[0]=offset[0];loaded_off[1]=offset[1];
 }
-static int valid_cover(const char *path) {
+/* Return 1 for PNG, 2 for JPEG, or 0 when unsafe/unsupported.
+ * JPEG dimensions are checked immediately after decoding. */
+static int cover_format(const char *path) {
     FILE *f=fopen(path,"rb");
     unsigned char h[24];
     long sz;
@@ -360,15 +409,18 @@ static int valid_cover(const char *path) {
     if(sz<24||sz>1024*1024){fclose(f);return 0;}
     if(fread(h,1,sizeof(h),f)!=sizeof(h)){fclose(f);return 0;}
     fclose(f);
+    if(h[0]==0xFF && h[1]==0xD8 && h[2]==0xFF)return 2;
     if(memcmp(h,"\x89PNG\r\n\x1a\n",8))return 0;
     w=((unsigned)h[16]<<24)|((unsigned)h[17]<<16)|((unsigned)h[18]<<8)|h[19];
     hgt=((unsigned)h[20]<<24)|((unsigned)h[21]<<16)|((unsigned)h[22]<<8)|h[23];
-    return w>=8 && hgt>=8 && w<=1024 && hgt<=1024;
+    return (w>=8 && hgt>=8 && w<=1024 && hgt<=1024)?1:0;
 }
 static void stream_one_cover(void) {
     int slot,p,i,idx;
     unsigned n;
     pngData tmp;
+    jpgData jpg;
+    int format;
     u32 *write;
     if(!texture_mem || stream_slot>=2*PER_PAGE)return;
     if(stream_delay>0){stream_delay--;return;}
@@ -378,11 +430,20 @@ static void stream_one_cover(void) {
     p=slot/PER_PAGE;i=slot%PER_PAGE;idx=offset[p]+i;
     if(idx>=matches[p])return;
     if(stream_bytes>3u*1024u*1024u)return;
-    if(!valid_cover(games[p][matching[p][idx]].cover))return;
+    format=cover_format(games[p][matching[p][idx]].cover);
+    if(!format)return;
     memset(&tmp,0,sizeof(tmp));
-    pngLoadFromFile(games[p][matching[p][idx]].cover,&tmp);
+    if(format==2){
+        memset(&jpg,0,sizeof(jpg));
+        if(jpgLoadFromFile(games[p][matching[p][idx]].cover,&jpg)!=0)return;
+        tmp.bmp_out=jpg.bmp_out;
+        tmp.width=jpg.width;tmp.height=jpg.height;tmp.pitch=jpg.pitch;
+    }else{
+        pngLoadFromFile(games[p][matching[p][idx]].cover,&tmp);
+    }
     if(!tmp.bmp_out)return;
-    if(tmp.width>1024 || tmp.height>1024 || !tmp.pitch){
+    if(tmp.width<8 || tmp.height<8 || tmp.width>1024 ||
+       tmp.height>1024 || !tmp.pitch){
         free(tmp.bmp_out);return;
     }
     if(tmp.width>160 || tmp.height>160){
@@ -1031,6 +1092,7 @@ int main(void) {
     unsigned previous=0;
     sysModuleLoad(SYSMODULE_FS);
     sysModuleLoad(SYSMODULE_PNGDEC);
+    sysModuleLoad(SYSMODULE_JPGDEC);
     tiny3d_Init(1024*1024);
     texture_mem=tiny3d_AllocTexture(TEX_BUDGET);
     font_setup();
@@ -1082,6 +1144,7 @@ int main(void) {
     sysUtilUnregisterCallback(SYSUTIL_EVENT_SLOT0);
     ioPadEnd();
     if(network_ready)netDeinitialize();
+    sysModuleUnload(SYSMODULE_JPGDEC);
     sysModuleUnload(SYSMODULE_PNGDEC);
     sysModuleUnload(SYSMODULE_FS);
     return 0;

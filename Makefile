@@ -10,8 +10,8 @@ endif
 #---------------------------------------------------------------------------------
 #  TITLE, APPID, CONTENTID, ICON0 SFOXML before ppu_rules.
 #---------------------------------------------------------------------------------
-TITLE		:=	STATION NOVA 1.9
-APPID		:=	STN000019
+TITLE		:=	STATION NOVA 2.0
+APPID		:=	STN000020
 CONTENTID	:=	UP0001-$(APPID)_00-0000000000000000
 ICON0		:=	assets/ICON0.PNG
 
@@ -37,7 +37,7 @@ INCLUDES	:=	include
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS		:=	-ltiny3d -lrsx -lsimdmath -lgcm_sys -lio -lsysutil -lrt -llv2 -lsysmodule -lpngdec -lnet -lm
+LIBS		:=	-ltiny3d -lrsx -lsimdmath -lgcm_sys -lio -lsysutil -lrt -llv2 -lsysmodule -lpngdec -ljpgdec -lnet -lm
 
 
 #---------------------------------------------------------------------------------
