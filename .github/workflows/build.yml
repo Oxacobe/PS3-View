@@ -71,5 +71,5 @@ jobs:
           tag_name: nova-2.0
           name: STATION NOVA 2.0
           body: "Tap STATION_NOVA_2.0.pkg below to download. Cover compatibility update. Installs separately; PS3 and PS2 launch logic unchanged."
-          files: STATION_NOVA_1.9.pkg
+          files: STATION_NOVA_2.0.pkg
           make_latest: true
