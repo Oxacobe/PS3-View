@@ -2,6 +2,8 @@ name: Build STATION PS3
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     paths:
@@ -48,6 +50,9 @@ jobs:
           find . -maxdepth 2 -type f \( -iname '*.pkg' -o -iname '*.self' -o -name 'EBOOT.BIN' \) -print
           echo "Require an actual non-empty installable package:"
           find . -maxdepth 2 -type f -iname '*.pkg' -size +0c -print -quit | grep -q .
+      - name: Name installer for download
+        shell: bash
+        run: cp station.pkg STATION_NOVA_2.0.pkg
       - name: Archive build output
         uses: actions/upload-artifact@v4
         with:
@@ -56,16 +61,15 @@ jobs:
           path: |
             assets/ICON0.PNG
             *.pkg
+            STATION_NOVA_2.0.pkg
             *.self
             EBOOT.BIN
-      - name: Name installer for download
-        shell: bash
-        run: cp station.pkg STATION_NOVA_1.9.pkg
       - name: Publish public download link
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: nova-1.9
-          name: STATION NOVA 1.9
-          body: "Tap STATION_NOVA_1.9.pkg below to download. Installs separately from earlier versions."
+          tag_name: nova-2.0
+          name: STATION NOVA 2.0
+          body: "Tap STATION_NOVA_2.0.pkg below to download. Cover compatibility update. Installs separately; PS3 and PS2 launch logic unchanged."
           files: STATION_NOVA_1.9.pkg
           make_latest: true
